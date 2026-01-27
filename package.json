@@ -1,0 +1,17 @@
+{
+  "name": "screenmir-signaling-server",
+  "version": "1.0.0",
+  "description": "WebSocket signaling server for ScreenMir WebRTC application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.6.0",
+    "uuid": "^9.0.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
