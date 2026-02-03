@@ -8,6 +8,8 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "basic-ftp": "^5.1.0",
+    "express": "^5.2.1",
     "socket.io": "^4.6.0",
     "uuid": "^9.0.0"
   },
