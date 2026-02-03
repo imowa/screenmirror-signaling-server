@@ -312,18 +312,32 @@ app.get('/api/ftp/download', async (req, res) => {
     const requestId = generateRequestId();
     console.log(`📤 Sending file download request to ${deviceId}: path=${path}, requestId=${requestId}`);
 
-    // Create promise to wait for complete file data
-    const responsePromise = new Promise((resolve, reject) => {
-      pendingRequests.set(requestId, { resolve, reject, chunks: [] });
+    // Set response headers for streaming
+    res.setHeader('Content-Disposition', `attachment; filename="${filename || 'download'}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Transfer-Encoding', 'chunked');
 
-      // Set timeout (5 minutes for large files)
-      setTimeout(() => {
-        if (pendingRequests.has(requestId)) {
-          pendingRequests.delete(requestId);
-          reject(new Error('Request timeout'));
-        }
-      }, 300000);
+    // Store response object for streaming (no buffering)
+    pendingRequests.set(requestId, {
+      response: res,
+      startTime: Date.now()
     });
+
+    // Set timeout (10 minutes for large files)
+    const timeoutId = setTimeout(() => {
+      if (pendingRequests.has(requestId)) {
+        console.error(`⏱️ Download timeout for requestId=${requestId}`);
+        pendingRequests.delete(requestId);
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Request timeout' });
+        } else {
+          res.end();
+        }
+      }
+    }, 600000); // 10 minutes
+
+    // Store timeout ID so we can clear it later
+    pendingRequests.get(requestId).timeoutId = timeoutId;
 
     // Send request to device via WebSocket
     io.to(device.socketId).emit('ftp-download-request', {
@@ -331,16 +345,13 @@ app.get('/api/ftp/download', async (req, res) => {
       path
     });
 
-    // Wait for complete file data
-    const fileData = await responsePromise;
-
-    // Send file to client
-    res.setHeader('Content-Disposition', `attachment; filename="${filename || 'download'}"`);
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.send(fileData);
+    // Response will be streamed as chunks arrive (no waiting)
+    console.log(`🔄 Streaming download started for requestId=${requestId}`);
   } catch (err) {
     console.error(`Error in /api/ftp/download: ${err.message}`);
-    res.status(500).json({ error: err.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 
@@ -549,33 +560,46 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle file download response from device (chunked)
+  // Handle file download response from device (chunked streaming)
   socket.on('ftp-download-chunk', (data) => {
     const { requestId, chunk, isLast, error } = data;
     console.log(`📥 Received file chunk: requestId=${requestId}, size=${chunk?.length || 0}, isLast=${isLast}`);
 
-    // Get or create pending request
+    // Get pending request
     const pendingRequest = pendingRequests.get(requestId);
     if (pendingRequest) {
+      const { response, timeoutId, startTime } = pendingRequest;
+
       if (error) {
-        pendingRequest.reject(new Error(error));
+        // Handle error
+        console.error(`❌ Download error for requestId=${requestId}: ${error}`);
+        clearTimeout(timeoutId);
         pendingRequests.delete(requestId);
-      } else {
-        // Accumulate chunks
-        if (!pendingRequest.chunks) {
-          pendingRequest.chunks = [];
+        if (!response.headersSent) {
+          response.status(500).json({ error });
+        } else {
+          response.end();
         }
+      } else {
+        // Stream chunk directly to client (no buffering)
         if (chunk) {
-          pendingRequest.chunks.push(Buffer.from(chunk, 'base64'));
+          const buffer = Buffer.from(chunk, 'base64');
+          response.write(buffer);
+          console.log(`✍️ Streamed ${buffer.length} bytes for requestId=${requestId}`);
         }
 
-        // If this is the last chunk, resolve with complete data
+        // If this is the last chunk, end the response
         if (isLast) {
-          const completeData = Buffer.concat(pendingRequest.chunks);
-          pendingRequest.resolve(completeData);
+          response.end();
+          clearTimeout(timeoutId);
           pendingRequests.delete(requestId);
+
+          const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+          console.log(`✅ Download completed for requestId=${requestId} in ${duration}s`);
         }
       }
+    } else {
+      console.warn(`⚠️ Received chunk for unknown requestId=${requestId}`);
     }
 
     // Also emit to all connected web clients for real-time updates
