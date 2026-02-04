@@ -621,18 +621,21 @@ app.get('/', (req, res) => {
           });
         }
 
-        async function browseDevice(deviceId, path = '/') {
-          console.log('🔍 browseDevice called:', { deviceId, path });
+        async function browseDevice(deviceId, path = '/', sortBy = 'date-desc', offset = 0, append = false) {
+          console.log('🔍 browseDevice called:', { deviceId, path, sortBy, offset, append });
           currentDevice = { id: deviceId };
           currentPath = path;
 
           const filesDiv = document.getElementById(\`files-\${deviceId}\`);
           console.log('📂 filesDiv found:', filesDiv ? 'yes' : 'no');
           filesDiv.style.display = 'block';
-          filesDiv.innerHTML = '<p class="loading">⏳ Loading files...</p>';
+
+          if (!append) {
+            filesDiv.innerHTML = '<p class="loading">⏳ Loading files...</p>';
+          }
 
           try {
-            const res = await fetch(\`/api/ftp/browse?deviceId=\${deviceId}&path=\${encodeURIComponent(path)}\`);
+            const res = await fetch(\`/api/ftp/browse?deviceId=\${deviceId}&path=\${encodeURIComponent(path)}&limit=200&offset=\${offset}&sortBy=\${sortBy}\`);
             const data = await res.json();
 
             if (data.error) {
@@ -640,12 +643,30 @@ app.get('/', (req, res) => {
               return;
             }
 
-            // Breadcrumb navigation
-            let html = \`<div class="breadcrumb">
-              📍 <strong>Path:</strong> \${path}
-              \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '/'); return false;">🏠 Home</a>\` : ''}
-              \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '\${path.split('/').slice(0, -1).join('/') || '/'}'); return false;">⬆️ Up</a>\` : ''}
-            </div>\`;
+            // Breadcrumb navigation with sort controls
+            let html = '';
+            if (!append) {
+              html = \`<div class="breadcrumb">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                  <div>
+                    📍 <strong>Path:</strong> \${path}
+                    \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '/'); return false;">🏠 Home</a>\` : ''}
+                    \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '\${path.split('/').slice(0, -1).join('/') || '/'}'); return false;">⬆️ Up</a>\` : ''}
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 0.9em; color: #666;">Sort by:</label>
+                    <select id="sort-\${deviceId}" onchange="browseDevice('\${deviceId}', '\${path}', this.value, 0, false)" style="padding: 5px 10px; border-radius: 5px; border: 1px solid #ddd; background: white; cursor: pointer;">
+                      <option value="date-desc" \${sortBy === 'date-desc' ? 'selected' : ''}>Date (Newest)</option>
+                      <option value="date-asc" \${sortBy === 'date-asc' ? 'selected' : ''}>Date (Oldest)</option>
+                      <option value="size-desc" \${sortBy === 'size-desc' ? 'selected' : ''}>Size (Largest)</option>
+                      <option value="size-asc" \${sortBy === 'size-asc' ? 'selected' : ''}>Size (Smallest)</option>
+                      <option value="name-asc" \${sortBy === 'name-asc' ? 'selected' : ''}>Name (A-Z)</option>
+                      <option value="name-desc" \${sortBy === 'name-desc' ? 'selected' : ''}>Name (Z-A)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>\`;
+            }
 
             // File list
             html += '<div class="file-list">';
@@ -693,8 +714,52 @@ app.get('/', (req, res) => {
             }
 
             html += '</div>';
-            filesDiv.innerHTML = html;
-            console.log('✅ File list displayed:', data.files.length, 'items');
+
+            // Add "Load More" button if there are more files
+            if (data.hasMore) {
+              html += \`
+                <div style="text-align: center; padding: 20px;">
+                  <button class="download-btn" onclick="browseDevice('\${deviceId}', '\${path}', '\${sortBy}', \${offset + data.files.length}, true)" style="padding: 10px 30px; font-size: 1em;">
+                    📄 Load More Files
+                  </button>
+                  <p style="color: #666; font-size: 0.9em; margin-top: 10px;">Showing \${offset + data.files.length} files</p>
+                </div>
+              \`;
+            } else if (offset > 0) {
+              html += \`
+                <div style="text-align: center; padding: 20px;">
+                  <p style="color: #666; font-size: 0.9em;">✅ All files loaded (\${offset + data.files.length} total)</p>
+                </div>
+              \`;
+            }
+
+            // Update DOM - append or replace
+            if (append) {
+              // Append mode: add new files to existing list
+              const fileListDiv = filesDiv.querySelector('.file-list');
+              if (fileListDiv) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = html;
+                const newFileList = tempDiv.querySelector('.file-list');
+                if (newFileList) {
+                  fileListDiv.innerHTML += newFileList.innerHTML;
+                }
+                // Update or add "Load More" button
+                const existingLoadMore = filesDiv.querySelector('.file-list').nextElementSibling;
+                if (existingLoadMore) {
+                  existingLoadMore.remove();
+                }
+                const loadMoreDiv = tempDiv.querySelector('.file-list').nextElementSibling;
+                if (loadMoreDiv) {
+                  filesDiv.appendChild(loadMoreDiv);
+                }
+              }
+            } else {
+              // Replace mode: show new content
+              filesDiv.innerHTML = html;
+            }
+
+            console.log('✅ File list displayed:', data.files.length, 'items', append ? '(appended)' : '(replaced)');
           } catch (err) {
             console.error('❌ Error browsing device:', err);
             filesDiv.innerHTML = \`<div class="error">❌ Error: \${err.message}</div>\`;
@@ -814,10 +879,28 @@ app.post('/api/ftp/register', (req, res) => {
 });
 
 app.get('/api/ftp/browse', async (req, res) => {
-  const { deviceId, path = '/' } = req.query;
+  const {
+    deviceId,
+    path = '/',
+    limit = '200',
+    offset = '0',
+    sortBy = 'date-desc'
+  } = req.query;
 
   if (!deviceId) {
     return res.status(400).json({ error: 'deviceId is required' });
+  }
+
+  // Parse pagination parameters
+  const limitNum = parseInt(limit, 10);
+  const offsetNum = parseInt(offset, 10);
+
+  if (isNaN(limitNum) || limitNum < 1 || limitNum > 1000) {
+    return res.status(400).json({ error: 'limit must be between 1 and 1000' });
+  }
+
+  if (isNaN(offsetNum) || offsetNum < 0) {
+    return res.status(400).json({ error: 'offset must be >= 0' });
   }
 
   // Find device
@@ -833,7 +916,7 @@ app.get('/api/ftp/browse', async (req, res) => {
   try {
     // Generate unique request ID
     const requestId = generateRequestId();
-    console.log(`📤 Sending file list request to ${deviceId}: path=${path}, requestId=${requestId}`);
+    console.log(`📤 Sending file list request to ${deviceId}: path=${path}, limit=${limitNum}, offset=${offsetNum}, sortBy=${sortBy}, requestId=${requestId}`);
 
     // Create promise to wait for response
     const responsePromise = new Promise((resolve, reject) => {
@@ -848,15 +931,18 @@ app.get('/api/ftp/browse', async (req, res) => {
       }, 30000);
     });
 
-    // Send request to device via WebSocket
+    // Send request to device via WebSocket with pagination and sorting
     io.to(device.socketId).emit('ftp-list-request', {
       requestId,
-      path
+      path,
+      limit: limitNum,
+      offset: offsetNum,
+      sortBy
     });
 
     // Wait for response
-    const files = await responsePromise;
-    res.json({ files });
+    const result = await responsePromise;
+    res.json(result);
   } catch (err) {
     console.error(`Error in /api/ftp/browse: ${err.message}`);
     res.status(500).json({ error: err.message });
@@ -1202,8 +1288,8 @@ io.on('connection', (socket) => {
 
   // Handle file listing response from device
   socket.on('ftp-list-response', (data) => {
-    const { requestId, files, error } = data;
-    console.log(`📂 Received file list response: requestId=${requestId}, files=${files?.length || 0}, error=${error || 'none'}`);
+    const { requestId, files, hasMore, totalCount, error } = data;
+    console.log(`📂 Received file list response: requestId=${requestId}, files=${files?.length || 0}, hasMore=${hasMore}, totalCount=${totalCount}, error=${error || 'none'}`);
 
     // Resolve pending request if exists
     const pendingRequest = pendingRequests.get(requestId);
@@ -1211,7 +1297,7 @@ io.on('connection', (socket) => {
       if (error) {
         pendingRequest.reject(new Error(error));
       } else {
-        pendingRequest.resolve(files);
+        pendingRequest.resolve({ files, hasMore, totalCount });
       }
       pendingRequests.delete(requestId);
     }
@@ -1221,6 +1307,8 @@ io.on('connection', (socket) => {
       requestId,
       deviceId: socket.deviceId,
       files,
+      hasMore,
+      totalCount,
       error
     });
   });
