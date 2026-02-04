@@ -630,7 +630,8 @@ app.get('/', (req, res) => {
             } else {
               html += data.files.map(file => {
                 if (file.type === 'directory') {
-                  const newPath = file.path || (path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`);
+                  // Always construct path from current path + file name (don't use file.path for navigation)
+                  const newPath = path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`;
                   return \`
                     <div class="file-item" onclick="browseDevice('\${deviceId}', '\${newPath}')">
                       <div class="file-info">
@@ -643,6 +644,7 @@ app.get('/', (req, res) => {
                     </div>
                   \`;
                 } else {
+                  // For files, use file.path if available (for downloads)
                   const filePath = file.path || (path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`);
                   const fileSize = formatFileSize(file.size);
                   const fileIcon = getFileIcon(file.name);
