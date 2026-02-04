@@ -570,6 +570,18 @@ app.get('/', (req, res) => {
             return;
           }
 
+          // Save current file browser state before re-rendering
+          const savedStates = {};
+          data.devices.forEach(device => {
+            const filesDiv = document.getElementById(\`files-\${device.id}\`);
+            if (filesDiv) {
+              savedStates[device.id] = {
+                display: filesDiv.style.display,
+                innerHTML: filesDiv.innerHTML
+              };
+            }
+          });
+
           devicesDiv.innerHTML = data.devices.map(device => {
             const statusClass = device.status === 'online' ? 'status-online' : 'status-offline';
             const statusText = device.status === 'online' ? '🟢 Online' : '🔴 Offline';
@@ -596,6 +608,17 @@ app.get('/', (req, res) => {
               </div>
             \`;
           }).join('');
+
+          // Restore file browser state after re-rendering
+          data.devices.forEach(device => {
+            if (savedStates[device.id]) {
+              const filesDiv = document.getElementById(\`files-\${device.id}\`);
+              if (filesDiv) {
+                filesDiv.style.display = savedStates[device.id].display;
+                filesDiv.innerHTML = savedStates[device.id].innerHTML;
+              }
+            }
+          });
         }
 
         async function browseDevice(deviceId, path = '/') {
