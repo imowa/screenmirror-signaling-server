@@ -599,10 +599,12 @@ app.get('/', (req, res) => {
         }
 
         async function browseDevice(deviceId, path = '/') {
+          console.log('🔍 browseDevice called:', { deviceId, path });
           currentDevice = { id: deviceId };
           currentPath = path;
 
           const filesDiv = document.getElementById(\`files-\${deviceId}\`);
+          console.log('📂 filesDiv found:', filesDiv ? 'yes' : 'no');
           filesDiv.style.display = 'block';
           filesDiv.innerHTML = '<p class="loading">⏳ Loading files...</p>';
 
@@ -669,7 +671,9 @@ app.get('/', (req, res) => {
 
             html += '</div>';
             filesDiv.innerHTML = html;
+            console.log('✅ File list displayed:', data.files.length, 'items');
           } catch (err) {
+            console.error('❌ Error browsing device:', err);
             filesDiv.innerHTML = \`<div class="error">❌ Error: \${err.message}</div>\`;
           }
         }
