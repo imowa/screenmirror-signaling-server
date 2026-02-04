@@ -28,10 +28,123 @@ const devices = new Map();
 // Store pending file operation requests (for WebSocket-based file transfer)
 const pendingRequests = new Map();
 
+// Store monitored apps data: deviceId -> { apps: [], lastUpdate: timestamp }
+const monitoredApps = new Map();
+
+// Render Free Tier Optimization: Configuration
+const CLEANUP_CONFIG = {
+  DEVICE_TTL: 30 * 60 * 1000,        // 30 minutes - remove inactive devices
+  MONITORED_APPS_TTL: 60 * 60 * 1000, // 1 hour - remove stale app data
+  PENDING_REQUEST_TIMEOUT: 30 * 1000,  // 30 seconds - timeout pending requests
+  CLEANUP_INTERVAL: 5 * 60 * 1000,     // 5 minutes - run cleanup
+  MAX_DEVICES: 100,                     // Limit total devices
+  MAX_MONITORED_APPS: 50                // Limit monitored apps
+};
+
 // Helper function to generate unique request IDs
 function generateRequestId() {
   return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
+
+// Render Free Tier Optimization: Cleanup Functions
+function cleanupStaleDevices() {
+  const now = Date.now();
+  let removed = 0;
+
+  for (const [deviceId, device] of devices.entries()) {
+    const lastActivity = device.lastActivity || device.connectedAt?.getTime() || 0;
+    if (now - lastActivity > CLEANUP_CONFIG.DEVICE_TTL) {
+      devices.delete(deviceId);
+      removed++;
+      console.log(`🧹 Removed stale device: ${deviceId}`);
+    }
+  }
+
+  // Enforce max devices limit
+  if (devices.size > CLEANUP_CONFIG.MAX_DEVICES) {
+    const sortedDevices = Array.from(devices.entries())
+      .sort((a, b) => {
+        const aTime = a[1].lastActivity || a[1].connectedAt?.getTime() || 0;
+        const bTime = b[1].lastActivity || b[1].connectedAt?.getTime() || 0;
+        return aTime - bTime;
+      });
+
+    const toRemove = devices.size - CLEANUP_CONFIG.MAX_DEVICES;
+    for (let i = 0; i < toRemove; i++) {
+      devices.delete(sortedDevices[i][0]);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`🧹 Cleanup: Removed ${removed} stale devices. Current: ${devices.size}`);
+  }
+}
+
+function cleanupMonitoredApps() {
+  const now = Date.now();
+  let removed = 0;
+
+  for (const [deviceId, data] of monitoredApps.entries()) {
+    if (now - data.lastUpdate > CLEANUP_CONFIG.MONITORED_APPS_TTL) {
+      monitoredApps.delete(deviceId);
+      removed++;
+      console.log(`🧹 Removed stale monitored apps for device: ${deviceId}`);
+    }
+  }
+
+  // Enforce max limit
+  if (monitoredApps.size > CLEANUP_CONFIG.MAX_MONITORED_APPS) {
+    const sortedApps = Array.from(monitoredApps.entries())
+      .sort((a, b) => a[1].lastUpdate - b[1].lastUpdate);
+
+    const toRemove = monitoredApps.size - CLEANUP_CONFIG.MAX_MONITORED_APPS;
+    for (let i = 0; i < toRemove; i++) {
+      monitoredApps.delete(sortedApps[i][0]);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`🧹 Cleanup: Removed ${removed} stale app data. Current: ${monitoredApps.size}`);
+  }
+}
+
+function cleanupPendingRequests() {
+  const now = Date.now();
+  let removed = 0;
+
+  for (const [requestId, request] of pendingRequests.entries()) {
+    const age = now - (request.timestamp || 0);
+    if (age > CLEANUP_CONFIG.PENDING_REQUEST_TIMEOUT) {
+      if (request.reject) {
+        request.reject(new Error('Request timeout'));
+      }
+      pendingRequests.delete(requestId);
+      removed++;
+    }
+  }
+
+  if (removed > 0) {
+    console.log(`🧹 Cleanup: Removed ${removed} timed-out requests. Current: ${pendingRequests.size}`);
+  }
+}
+
+function logMemoryUsage() {
+  const usage = process.memoryUsage();
+  console.log(`📊 Memory: ${Math.round(usage.heapUsed / 1024 / 1024)}MB / ${Math.round(usage.heapTotal / 1024 / 1024)}MB | Devices: ${devices.size} | Apps: ${monitoredApps.size} | Requests: ${pendingRequests.size}`);
+}
+
+function runPeriodicCleanup() {
+  cleanupStaleDevices();
+  cleanupMonitoredApps();
+  cleanupPendingRequests();
+  logMemoryUsage();
+}
+
+// Start periodic cleanup
+setInterval(runPeriodicCleanup, CLEANUP_CONFIG.CLEANUP_INTERVAL);
+console.log(`✅ Periodic cleanup enabled (every ${CLEANUP_CONFIG.CLEANUP_INTERVAL / 1000}s)`);
 
 // FTP Helper Functions (legacy - kept for backward compatibility)
 async function connectToDeviceFtp(deviceIp) {
@@ -83,31 +196,364 @@ app.get('/', (req, res) => {
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Screen Mirror FTP Browser</title>
+      <title>Screen Mirror File Browser</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
-        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-        h1 { color: #333; }
-        .device { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 5px; }
-        .device h3 { margin-top: 0; }
-        .files { margin-top: 10px; }
-        .file-item { padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-        .file-item:hover { background: #f5f5f5; }
-        .directory { color: #0066cc; cursor: pointer; font-weight: bold; }
-        .file { color: #333; }
-        .download-btn { background: #4CAF50; color: white; border: none; padding: 5px 10px; cursor: pointer; border-radius: 3px; }
-        .download-btn:hover { background: #45a049; }
-        .breadcrumb { margin: 10px 0; color: #666; }
-        .error { color: red; padding: 10px; background: #fee; border-radius: 5px; }
-        .loading { color: #666; font-style: italic; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          min-height: 100vh;
+          padding: 20px;
+        }
+
+        .container {
+          max-width: 1200px;
+          margin: 0 auto;
+        }
+
+        .header {
+          background: white;
+          padding: 30px;
+          border-radius: 15px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+          margin-bottom: 30px;
+          text-align: center;
+        }
+
+        .header h1 {
+          color: #667eea;
+          font-size: 2.5em;
+          margin-bottom: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 15px;
+        }
+
+        .header p {
+          color: #666;
+          font-size: 1.1em;
+        }
+
+        .device-card {
+          background: white;
+          border-radius: 15px;
+          padding: 25px;
+          margin-bottom: 20px;
+          box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+          transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .device-card:hover {
+          transform: translateY(-5px);
+          box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .device-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 15px;
+          padding-bottom: 15px;
+          border-bottom: 2px solid #f0f0f0;
+        }
+
+        .device-info h3 {
+          color: #333;
+          font-size: 1.5em;
+          margin-bottom: 5px;
+        }
+
+        .device-meta {
+          display: flex;
+          gap: 20px;
+          flex-wrap: wrap;
+          margin-top: 10px;
+        }
+
+        .meta-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #666;
+          font-size: 0.95em;
+        }
+
+        .status-badge {
+          display: inline-block;
+          padding: 5px 15px;
+          border-radius: 20px;
+          font-size: 0.85em;
+          font-weight: 600;
+        }
+
+        .status-online {
+          background: #d4edda;
+          color: #155724;
+        }
+
+        .status-offline {
+          background: #f8d7da;
+          color: #721c24;
+        }
+
+        .browse-btn {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+          border: none;
+          padding: 12px 30px;
+          border-radius: 25px;
+          font-size: 1em;
+          font-weight: 600;
+          cursor: pointer;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .browse-btn:hover {
+          transform: scale(1.05);
+          box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .files-container {
+          margin-top: 20px;
+          background: #f8f9fa;
+          border-radius: 10px;
+          padding: 20px;
+        }
+
+        .breadcrumb {
+          background: white;
+          padding: 15px 20px;
+          border-radius: 10px;
+          margin-bottom: 15px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          font-size: 0.95em;
+          color: #666;
+        }
+
+        .breadcrumb a {
+          color: #667eea;
+          text-decoration: none;
+          font-weight: 600;
+          transition: color 0.2s;
+        }
+
+        .breadcrumb a:hover {
+          color: #764ba2;
+        }
+
+        .file-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .file-item {
+          background: white;
+          padding: 15px 20px;
+          border-radius: 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          transition: all 0.2s;
+          cursor: pointer;
+        }
+
+        .file-item:hover {
+          background: #f0f0f0;
+          transform: translateX(5px);
+        }
+
+        .file-info {
+          display: flex;
+          align-items: center;
+          gap: 15px;
+          flex: 1;
+        }
+
+        .file-icon {
+          font-size: 1.8em;
+        }
+
+        .file-details {
+          flex: 1;
+        }
+
+        .file-name {
+          font-weight: 600;
+          color: #333;
+          margin-bottom: 3px;
+        }
+
+        .file-size {
+          font-size: 0.85em;
+          color: #999;
+        }
+
+        .download-btn {
+          background: #28a745;
+          color: white;
+          border: none;
+          padding: 8px 20px;
+          border-radius: 20px;
+          font-size: 0.9em;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .download-btn:hover {
+          background: #218838;
+          transform: scale(1.05);
+        }
+
+        .loading {
+          text-align: center;
+          padding: 40px;
+          color: #666;
+          font-style: italic;
+        }
+
+        .error {
+          background: #f8d7da;
+          color: #721c24;
+          padding: 15px 20px;
+          border-radius: 10px;
+          border-left: 4px solid #f5c6cb;
+        }
+
+        .no-devices {
+          text-align: center;
+          padding: 60px 20px;
+          background: white;
+          border-radius: 15px;
+          box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        .no-devices h2 {
+          color: #666;
+          margin-bottom: 10px;
+        }
+
+        .no-devices p {
+          color: #999;
+        }
+
+        .server-status {
+          margin-top: 20px;
+          padding: 15px;
+          background: #f8f9fa;
+          border-radius: 10px;
+          display: flex;
+          justify-content: center;
+          gap: 30px;
+          flex-wrap: wrap;
+          font-size: 0.9em;
+        }
+
+        .status-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #555;
+        }
+
+        .status-item strong {
+          color: #333;
+        }
+
+        .status-online-badge {
+          display: inline-block;
+          width: 8px;
+          height: 8px;
+          background: #28a745;
+          border-radius: 50%;
+          animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+
+        .render-warning {
+          margin-top: 15px;
+          padding: 12px;
+          background: #fff3cd;
+          border-left: 4px solid #ffc107;
+          border-radius: 5px;
+          font-size: 0.85em;
+          color: #856404;
+        }
+
+        @media (max-width: 768px) {
+          .header h1 { font-size: 1.8em; }
+          .device-header { flex-direction: column; align-items: flex-start; gap: 15px; }
+          .file-item { flex-direction: column; align-items: flex-start; gap: 10px; }
+        }
       </style>
     </head>
     <body>
-      <h1>📱 Screen Mirror FTP Browser</h1>
-      <div id="devices"></div>
+      <div class="container">
+        <div class="header">
+          <h1>📱 Screen Mirror File Browser</h1>
+          <p>Access and download files from your connected devices</p>
+          <div id="server-status" class="server-status"></div>
+          <div class="render-warning" style="display:none;" id="render-warning">
+            ⚠️ <strong>Free Tier Notice:</strong> Server may spin down after 15 minutes of inactivity. First request after spin-down may take 30-50 seconds.
+          </div>
+        </div>
+        <div id="devices"></div>
+      </div>
 
       <script>
         let currentDevice = null;
         let currentPath = '/';
+
+        async function loadServerStatus() {
+          try {
+            const res = await fetch('/health');
+            const data = await res.json();
+
+            const statusDiv = document.getElementById('server-status');
+            const uptimeMinutes = Math.floor(data.uptime / 60);
+            const uptimeHours = Math.floor(uptimeMinutes / 60);
+            const displayUptime = uptimeHours > 0
+              ? \`\${uptimeHours}h \${uptimeMinutes % 60}m\`
+              : \`\${uptimeMinutes}m\`;
+
+            statusDiv.innerHTML = \`
+              <div class="status-item">
+                <span class="status-online-badge"></span>
+                <strong>Status:</strong> Online
+              </div>
+              <div class="status-item">
+                <strong>⏱️ Uptime:</strong> \${displayUptime}
+              </div>
+              <div class="status-item">
+                <strong>💾 Memory:</strong> \${data.memory.heapUsed}MB / \${data.memory.heapTotal}MB
+              </div>
+              <div class="status-item">
+                <strong>📱 Devices:</strong> \${data.stats.devices}
+              </div>
+            \`;
+
+            // Show Render warning if uptime is low (recently started)
+            if (data.uptime < 300) { // Less than 5 minutes
+              document.getElementById('render-warning').style.display = 'block';
+            }
+          } catch (err) {
+            console.error('Failed to load server status:', err);
+            document.getElementById('server-status').innerHTML = \`
+              <div class="status-item" style="color: #dc3545;">
+                ⚠️ Unable to fetch server status
+              </div>
+            \`;
+          }
+        }
 
         async function loadDevices() {
           const res = await fetch('/api/devices');
@@ -115,21 +561,41 @@ app.get('/', (req, res) => {
           const devicesDiv = document.getElementById('devices');
 
           if (data.devices.length === 0) {
-            devicesDiv.innerHTML = '<p class="error">No devices connected</p>';
+            devicesDiv.innerHTML = \`
+              <div class="no-devices">
+                <h2>📱 No Devices Connected</h2>
+                <p>Connect your Android device to start browsing files</p>
+              </div>
+            \`;
             return;
           }
 
-          devicesDiv.innerHTML = data.devices.map(device => \`
-            <div class="device">
-              <h3>\${device.name} (\${device.id})</h3>
-              <p>Type: \${device.type} | Status: \${device.status}</p>
-              <p>IP: \${device.ipAddress || 'Unknown'}</p>
-              <button onclick="browseDevice('\${device.id}')">
-                Browse Files
-              </button>
-              <div id="files-\${device.id}" class="files"></div>
-            </div>
-          \`).join('');
+          devicesDiv.innerHTML = data.devices.map(device => {
+            const statusClass = device.status === 'online' ? 'status-online' : 'status-offline';
+            const statusText = device.status === 'online' ? '🟢 Online' : '🔴 Offline';
+
+            return \`
+              <div class="device-card">
+                <div class="device-header">
+                  <div class="device-info">
+                    <h3>\${device.name}</h3>
+                    <div class="device-meta">
+                      <span class="meta-item">🆔 \${device.id}</span>
+                      <span class="meta-item">📱 \${device.type}</span>
+                      <span class="meta-item">🌐 \${device.ipAddress || 'Unknown'}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <span class="status-badge \${statusClass}">\${statusText}</span>
+                  </div>
+                </div>
+                <button class="browse-btn" onclick="browseDevice('\${device.id}')">
+                  📂 Browse Files
+                </button>
+                <div id="files-\${device.id}" class="files-container" style="display:none;"></div>
+              </div>
+            \`;
+          }).join('');
         }
 
         async function browseDevice(deviceId, path = '/') {
@@ -137,52 +603,105 @@ app.get('/', (req, res) => {
           currentPath = path;
 
           const filesDiv = document.getElementById(\`files-\${deviceId}\`);
-          filesDiv.innerHTML = '<p class="loading">Loading files...</p>';
+          filesDiv.style.display = 'block';
+          filesDiv.innerHTML = '<p class="loading">⏳ Loading files...</p>';
 
           try {
             const res = await fetch(\`/api/ftp/browse?deviceId=\${deviceId}&path=\${encodeURIComponent(path)}\`);
             const data = await res.json();
 
             if (data.error) {
-              filesDiv.innerHTML = \`<p class="error">\${data.error}</p>\`;
+              filesDiv.innerHTML = \`<div class="error">❌ \${data.error}</div>\`;
               return;
             }
 
-            let html = \`<div class="breadcrumb">Path: \${path}\`;
-            if (path !== '/') {
-              const parentPath = path.split('/').slice(0, -1).join('/') || '/';
-              html += \` <a href="#" onclick="browseDevice('\${deviceId}', '\${parentPath}'); return false;">⬆️ Up</a>\`;
+            // Breadcrumb navigation
+            let html = \`<div class="breadcrumb">
+              📍 <strong>Path:</strong> \${path}
+              \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '/'); return false;">🏠 Home</a>\` : ''}
+              \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '\${path.split('/').slice(0, -1).join('/') || '/'}'); return false;">⬆️ Up</a>\` : ''}
+            </div>\`;
+
+            // File list
+            html += '<div class="file-list">';
+
+            if (data.files.length === 0) {
+              html += '<div class="error">📭 This folder is empty</div>';
+            } else {
+              html += data.files.map(file => {
+                if (file.type === 'directory') {
+                  const newPath = file.path || (path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`);
+                  return \`
+                    <div class="file-item" onclick="browseDevice('\${deviceId}', '\${newPath}')">
+                      <div class="file-info">
+                        <div class="file-icon">📁</div>
+                        <div class="file-details">
+                          <div class="file-name">\${file.name}</div>
+                          <div class="file-size">Folder</div>
+                        </div>
+                      </div>
+                    </div>
+                  \`;
+                } else {
+                  const filePath = file.path || (path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`);
+                  const fileSize = formatFileSize(file.size);
+                  const fileIcon = getFileIcon(file.name);
+
+                  return \`
+                    <div class="file-item">
+                      <div class="file-info">
+                        <div class="file-icon">\${fileIcon}</div>
+                        <div class="file-details">
+                          <div class="file-name">\${file.name}</div>
+                          <div class="file-size">\${fileSize}</div>
+                        </div>
+                      </div>
+                      <button class="download-btn" onclick="downloadFile('\${deviceId}', '\${filePath}', '\${file.name}'); event.stopPropagation();">
+                        ⬇️ Download
+                      </button>
+                    </div>
+                  \`;
+                }
+              }).join('');
             }
+
             html += '</div>';
-
-            html += data.files.map(file => {
-              if (file.type === 'directory') {
-                const newPath = path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`;
-                return \`
-                  <div class="file-item">
-                    <span class="directory" onclick="browseDevice('\${deviceId}', '\${newPath}')">
-                      📁 \${file.name}
-                    </span>
-                  </div>
-                \`;
-              } else {
-                const filePath = path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`;
-                const sizeKB = (file.size / 1024).toFixed(2);
-                return \`
-                  <div class="file-item">
-                    <span class="file">📄 \${file.name} (\${sizeKB} KB)</span>
-                    <button class="download-btn" onclick="downloadFile('\${deviceId}', '\${filePath}', '\${file.name}')">
-                      Download
-                    </button>
-                  </div>
-                \`;
-              }
-            }).join('');
-
             filesDiv.innerHTML = html;
           } catch (err) {
-            filesDiv.innerHTML = \`<p class="error">Error: \${err.message}</p>\`;
+            filesDiv.innerHTML = \`<div class="error">❌ Error: \${err.message}</div>\`;
           }
+        }
+
+        function formatFileSize(bytes) {
+          if (bytes === 0) return '0 Bytes';
+          const k = 1024;
+          const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function getFileIcon(filename) {
+          const ext = filename.split('.').pop().toLowerCase();
+          const iconMap = {
+            // Images
+            'jpg': '🖼️', 'jpeg': '🖼️', 'png': '🖼️', 'gif': '🖼️', 'bmp': '🖼️', 'svg': '🖼️', 'webp': '🖼️',
+            // Videos
+            'mp4': '🎥', 'avi': '🎥', 'mkv': '🎥', 'mov': '🎥', 'wmv': '🎥', 'flv': '🎥', 'webm': '🎥',
+            // Audio
+            'mp3': '🎵', 'wav': '🎵', 'flac': '🎵', 'aac': '🎵', 'ogg': '🎵', 'm4a': '🎵',
+            // Documents
+            'pdf': '📕', 'doc': '📘', 'docx': '📘', 'txt': '📄', 'rtf': '📄',
+            'xls': '📊', 'xlsx': '📊', 'csv': '📊',
+            'ppt': '📙', 'pptx': '📙',
+            // Archives
+            'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦',
+            // Code
+            'js': '📜', 'html': '📜', 'css': '📜', 'json': '📜', 'xml': '📜',
+            'java': '☕', 'py': '🐍', 'cpp': '⚙️', 'c': '⚙️',
+            // APK
+            'apk': '📱'
+          };
+          return iconMap[ext] || '📄';
         }
 
         function downloadFile(deviceId, remotePath, filename) {
@@ -190,14 +709,38 @@ app.get('/', (req, res) => {
         }
 
         // Load devices on page load
+        loadServerStatus();
         loadDevices();
 
         // Refresh devices every 5 seconds
+        setInterval(loadServerStatus, 30000); // Update server status every 30 seconds
         setInterval(loadDevices, 5000);
       </script>
     </body>
     </html>
   `);
+});
+
+// Health check endpoint for Render free tier (prevents spin-down)
+app.get('/health', (req, res) => {
+  const uptime = process.uptime();
+  const memory = process.memoryUsage();
+
+  res.status(200).json({
+    status: 'ok',
+    uptime: Math.floor(uptime),
+    memory: {
+      heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+      heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+      rss: Math.round(memory.rss / 1024 / 1024)
+    },
+    stats: {
+      devices: devices.size,
+      monitoredApps: monitoredApps.size,
+      pendingRequests: pendingRequests.size
+    },
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get('/api/devices', (req, res) => {
@@ -229,6 +772,7 @@ app.post('/api/ftp/register', (req, res) => {
     socketId: null,
     status: 'online',
     connectedAt: new Date(),
+    lastActivity: Date.now(),
     ipAddress: ipAddress
   });
 
@@ -264,7 +808,7 @@ app.get('/api/ftp/browse', async (req, res) => {
 
     // Create promise to wait for response
     const responsePromise = new Promise((resolve, reject) => {
-      pendingRequests.set(requestId, { resolve, reject });
+      pendingRequests.set(requestId, { resolve, reject, timestamp: Date.now() });
 
       // Set timeout (30 seconds)
       setTimeout(() => {
@@ -355,6 +899,96 @@ app.get('/api/ftp/download', async (req, res) => {
   }
 });
 
+// ============================================
+// APP MONITORING ENDPOINTS
+// ============================================
+
+// Sync full app list from device
+app.post('/api/apps/sync', (req, res) => {
+  const { deviceId, apps, timestamp } = req.body;
+
+  if (!deviceId || !apps) {
+    return res.status(400).json({ error: 'deviceId and apps are required' });
+  }
+
+  console.log(`📱 App sync from ${deviceId}: ${apps.length} apps`);
+
+  // Store app data
+  monitoredApps.set(deviceId, {
+    apps: apps,
+    lastUpdate: timestamp || Date.now()
+  });
+
+  res.json({ success: true, appsReceived: apps.length });
+});
+
+// Update a single app
+app.post('/api/apps/update', (req, res) => {
+  const { deviceId, app } = req.body;
+
+  if (!deviceId || !app) {
+    return res.status(400).json({ error: 'deviceId and app are required' });
+  }
+
+  console.log(`📱 App update from ${deviceId}: ${app.appName}`);
+
+  // Get existing data or create new
+  const deviceData = monitoredApps.get(deviceId) || { apps: [], lastUpdate: Date.now() };
+
+  // Find and update or add app
+  const existingIndex = deviceData.apps.findIndex(a => a.packageName === app.packageName);
+  if (existingIndex >= 0) {
+    deviceData.apps[existingIndex] = app;
+  } else {
+    deviceData.apps.push(app);
+  }
+
+  deviceData.lastUpdate = Date.now();
+  monitoredApps.set(deviceId, deviceData);
+
+  res.json({ success: true });
+});
+
+// Remove an app
+app.post('/api/apps/remove', (req, res) => {
+  const { deviceId, packageName } = req.body;
+
+  if (!deviceId || !packageName) {
+    return res.status(400).json({ error: 'deviceId and packageName are required' });
+  }
+
+  console.log(`📱 App remove from ${deviceId}: ${packageName}`);
+
+  const deviceData = monitoredApps.get(deviceId);
+  if (deviceData) {
+    deviceData.apps = deviceData.apps.filter(a => a.packageName !== packageName);
+    deviceData.lastUpdate = Date.now();
+    monitoredApps.set(deviceId, deviceData);
+  }
+
+  res.json({ success: true });
+});
+
+// Get app list for a device
+app.get('/api/apps/list', (req, res) => {
+  const { deviceId } = req.query;
+
+  if (!deviceId) {
+    return res.status(400).json({ error: 'deviceId is required' });
+  }
+
+  const deviceData = monitoredApps.get(deviceId);
+  if (!deviceData) {
+    return res.json({ apps: [], lastUpdate: null });
+  }
+
+  res.json({
+    apps: deviceData.apps,
+    lastUpdate: deviceData.lastUpdate,
+    totalApps: deviceData.apps.length
+  });
+});
+
 
 console.log(`🚀 Signaling server starting on port ${PORT}...`);
 console.log(`🔧 Server version: Updated with register_device handler and enhanced logging`);
@@ -405,6 +1039,7 @@ io.on('connection', (socket) => {
         socketId: socket.id,
         status: 'online',
         connectedAt: new Date(),
+        lastActivity: Date.now(),
         ipAddress: data.ipAddress || null
       });
 
@@ -448,6 +1083,7 @@ io.on('connection', (socket) => {
         socketId: socket.id,
         status: 'online',
         connectedAt: new Date(),
+        lastActivity: Date.now(),
         ipAddress: data.ipAddress || null
       });
 
