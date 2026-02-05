@@ -986,7 +986,7 @@ app.get('/api/ftp/download', async (req, res) => {
       startTime: Date.now()
     });
 
-    // Set timeout (10 minutes for large files)
+    // Set timeout (60 minutes for 1GB+ files)
     const timeoutId = setTimeout(() => {
       if (pendingRequests.has(requestId)) {
         console.error(`⏱️ Download timeout for requestId=${requestId}`);
@@ -997,7 +997,7 @@ app.get('/api/ftp/download', async (req, res) => {
           res.end();
         }
       }
-    }, 600000); // 10 minutes
+    }, 3600000); // 60 minutes
 
     // Store timeout ID so we can clear it later
     pendingRequests.get(requestId).timeoutId = timeoutId;
