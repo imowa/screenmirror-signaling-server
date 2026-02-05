@@ -15,7 +15,11 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  // Increase timeouts for large file transfers
+  pingTimeout: 300000,  // 5 minutes (default: 20 seconds)
+  pingInterval: 60000,  // 1 minute (default: 25 seconds)
+  maxHttpBufferSize: 1e8  // 100MB max message size
 });
 
 // Middleware
