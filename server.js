@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const express = require('express');
 const http = require('http');
+const cors = require('cors');
 const { Client: FtpClient } = require('basic-ftp');
 
 const PORT = process.env.PORT || 3001;
@@ -23,6 +24,7 @@ const io = new Server(server, {
 });
 
 // Middleware
+app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -1018,6 +1020,49 @@ app.get('/api/ftp/download', async (req, res) => {
   }
 });
 
+// VPS upload endpoint - request device to upload file to VPS
+app.post('/api/vps/upload', async (req, res) => {
+  const { deviceId, path } = req.body;
+
+  if (!deviceId || !path) {
+    return res.status(400).json({ error: 'deviceId and path are required' });
+  }
+
+  // Find device
+  const device = devices.get(deviceId);
+  if (!device) {
+    return res.status(404).json({ error: 'Device not found or offline' });
+  }
+
+  if (!device.socketId) {
+    return res.status(400).json({ error: 'Device not connected via WebSocket' });
+  }
+
+  try {
+    // Generate unique request ID
+    const requestId = generateRequestId();
+    console.log(`📤 Sending VPS upload request to ${deviceId}: path=${path}, requestId=${requestId}`);
+
+    // Send request to device via WebSocket
+    io.to(device.socketId).emit('vps-upload-request', {
+      requestId,
+      path
+    });
+
+    // Return requestId immediately - client will listen for response via WebSocket
+    res.json({
+      success: true,
+      requestId,
+      message: 'Upload request sent to device. Listen for vps-upload-response event.'
+    });
+
+    console.log(`✅ VPS upload request sent: requestId=${requestId}`);
+  } catch (err) {
+    console.error(`Error in /api/vps/upload: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // APP MONITORING ENDPOINTS
 // ============================================
@@ -1365,6 +1410,20 @@ io.on('connection', (socket) => {
       deviceId: socket.deviceId,
       chunk,
       isLast,
+      error
+    });
+  });
+
+  // Handle VPS upload response from device
+  socket.on('vps-upload-response', (data) => {
+    const { requestId, downloadUrl, error } = data;
+    console.log(`📤 Received VPS upload response: requestId=${requestId}, downloadUrl=${downloadUrl}, error=${error}`);
+
+    // Emit to all connected web clients
+    io.emit('vps-upload-response', {
+      requestId,
+      deviceId: socket.deviceId,
+      downloadUrl,
       error
     });
   });

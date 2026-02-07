@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VPS Download Example</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        select {
+            padding: 8px;
+            margin: 5px 0;
+            width: 100%;
+            max-width: 500px;
+        }
+        .device-item {
+            padding: 5px;
+            margin: 2px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>VPS Download Example</h1>
+    <p>This example demonstrates how to download files from Android devices via VPS upload.</p>
+
+    <div class="section">
+        <h2>Step 1: Connect to Signaling Server</h2>
+        <button onclick="connectToServer()">Connect</button>
+        <div id="connectionStatus">Not connected</div>
+    </div>
+
+    <div class="section">
+        <h2>Step 1.5: Select Device</h2>
+        <button onclick="refreshDevices()">Refresh Devices</button>
+        <br><br>
+        <select id="deviceSelect" onchange="onDeviceSelected()">
+            <option value="">-- Select a device --</option>
+        </select>
+        <div id="deviceInfo" style="margin-top: 10px; color: #666;"></div>
+    </div>
+
+    <div class="section">
+        <h2>Step 2: Request VPS Upload</h2>
+        <p>Enter file path to upload to VPS:</p>
+        <input type="text" id="deviceId" placeholder="Device ID (auto-filled)" style="width: 300px;" readonly>
+        <br><br>
+        <input type="text" id="filePath" placeholder="File path (e.g., /storage/emulated/0/DCIM/Camera/IMG_001.jpg)" style="width: 500px;">
+        <br><br>
+        <button onclick="requestVpsUpload()">Request VPS Upload</button>
+    </div>
+
+    <div class="section">
+        <h2>Step 3: Download from VPS</h2>
+        <p>Once the upload completes, the download URL will appear here:</p>
+        <div id="downloadUrl">Waiting for upload...</div>
+        <br>
+        <button id="downloadBtn" onclick="downloadFromVps()" disabled>Download File</button>
+    </div>
+
+    <div class="section">
+        <h2>Log</h2>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let socket = null;
+        let currentRequestId = null;
+        let currentDownloadUrl = null;
+
+        // Signaling server URL - change this if your server is on a different host
+        const SIGNALING_SERVER_URL = 'http://localhost:3001';
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
+            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function refreshDevices() {
+            try {
+                log('🔄 Fetching available devices...', 'info');
+                const response = await fetch(`${SIGNALING_SERVER_URL}/api/devices`);
+                const data = await response.json();
+
+                const deviceSelect = document.getElementById('deviceSelect');
+                deviceSelect.innerHTML = '<option value="">-- Select a device --</option>';
+
+                if (data.devices && data.devices.length > 0) {
+                    data.devices.forEach(device => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.textContent = `${device.name} (${device.type}) - ${device.ipAddress || 'No IP'}`;
+                        option.dataset.deviceInfo = JSON.stringify(device);
+                        deviceSelect.appendChild(option);
+                    });
+                    log(`✅ Found ${data.devices.length} device(s)`, 'success');
+                } else {
+                    log('⚠️ No devices found. Make sure your Android device is connected.', 'error');
+                }
+            } catch (err) {
+                log(`❌ Error fetching devices: ${err.message}`, 'error');
+            }
+        }
+
+        function onDeviceSelected() {
+            const deviceSelect = document.getElementById('deviceSelect');
+            const selectedOption = deviceSelect.options[deviceSelect.selectedIndex];
+
+            if (selectedOption.value) {
+                const deviceInfo = JSON.parse(selectedOption.dataset.deviceInfo);
+                document.getElementById('deviceId').value = deviceInfo.deviceId;
+                document.getElementById('deviceInfo').innerHTML =
+                    `<strong>Selected:</strong> ${deviceInfo.name} (${deviceInfo.type})<br>` +
+                    `<strong>IP:</strong> ${deviceInfo.ipAddress || 'N/A'}<br>` +
+                    `<strong>Status:</strong> ${deviceInfo.status}`;
+                log(`✅ Selected device: ${deviceInfo.name}`, 'success');
+            } else {
+                document.getElementById('deviceId').value = '';
+                document.getElementById('deviceInfo').innerHTML = '';
+            }
+        }
+
+        function connectToServer() {
+            if (socket && socket.connected) {
+                log('Already connected', 'info');
+                return;
+            }
+
+            log('Connecting to signaling server...', 'info');
+            socket = io(SIGNALING_SERVER_URL);
+
+            socket.on('connect', () => {
+                log('✅ Connected to signaling server', 'success');
+                document.getElementById('connectionStatus').innerHTML = '<span class="success">Connected</span>';
+            });
+
+            socket.on('disconnect', () => {
+                log('❌ Disconnected from signaling server', 'error');
+                document.getElementById('connectionStatus').innerHTML = '<span class="error">Disconnected</span>';
+            });
+
+            // Listen for VPS upload response
+            socket.on('vps-upload-response', (data) => {
+                const { requestId, deviceId, downloadUrl, error } = data;
+
+                if (requestId !== currentRequestId) {
+                    return; // Not our request
+                }
+
+                if (error) {
+                    log(`❌ VPS upload failed: ${error}`, 'error');
+                    document.getElementById('downloadUrl').innerHTML = `<span class="error">Error: ${error}</span>`;
+                } else {
+                    log(`✅ VPS upload completed! Download URL: ${downloadUrl}`, 'success');
+                    currentDownloadUrl = downloadUrl;
+                    document.getElementById('downloadUrl').innerHTML = `<span class="success">${downloadUrl}</span>`;
+                    document.getElementById('downloadBtn').disabled = false;
+                }
+            });
+        }
+
+        async function requestVpsUpload() {
+            const deviceId = document.getElementById('deviceId').value.trim();
+            const filePath = document.getElementById('filePath').value.trim();
+
+            if (!deviceId || !filePath) {
+                log('❌ Please enter device ID and file path', 'error');
+                return;
+            }
+
+            if (!socket || !socket.connected) {
+                log('❌ Not connected to server. Please connect first.', 'error');
+                return;
+            }
+
+            try {
+                log(`📤 Requesting VPS upload: deviceId=${deviceId}, path=${filePath}`, 'info');
+
+                const response = await fetch(`${SIGNALING_SERVER_URL}/api/vps/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        deviceId: deviceId,
+                        path: filePath
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    currentRequestId = result.requestId;
+                    log(`✅ Upload request sent. Request ID: ${result.requestId}`, 'success');
+                    log('⏳ Waiting for device to upload file to VPS...', 'info');
+                    document.getElementById('downloadUrl').innerHTML = '<span class="info">Uploading to VPS...</span>';
+                } else {
+                    log(`❌ Upload request failed: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                log(`❌ Error requesting VPS upload: ${err.message}`, 'error');
+            }
+        }
+
+        function downloadFromVps() {
+            if (!currentDownloadUrl) {
+                log('❌ No download URL available', 'error');
+                return;
+            }
+
+            log(`📥 Downloading from VPS: ${currentDownloadUrl}`, 'info');
+
+            // Open download URL in new tab
+            window.open(currentDownloadUrl, '_blank');
+
+            log('✅ Download started in new tab', 'success');
+        }
+    </script>
+</body>
+</html>
