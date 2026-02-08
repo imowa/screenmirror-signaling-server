@@ -1428,6 +1428,41 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle file browse request from web client
+  socket.on('browse-files-request', (data) => {
+    const { requestId, deviceId, path } = data;
+    console.log(`📁 Browse files request: deviceId=${deviceId}, path=${path}, requestId=${requestId}`);
+
+    const device = devices.get(deviceId);
+    if (!device) {
+      socket.emit('browse-files-response', {
+        requestId,
+        error: 'Device not found'
+      });
+      return;
+    }
+
+    // Forward request to Android device
+    io.to(device.socketId).emit('browse-files-request', {
+      requestId,
+      path
+    });
+  });
+
+  // Handle file browse response from device
+  socket.on('browse-files-response', (data) => {
+    const { requestId, files, error } = data;
+    console.log(`📁 Received browse files response: requestId=${requestId}, files=${files?.length || 0}, error=${error}`);
+
+    // Emit to all connected web clients
+    io.emit('browse-files-response', {
+      requestId,
+      deviceId: socket.deviceId,
+      files,
+      error
+    });
+  });
+
   // Handle disconnect
   socket.on('disconnect', (reason) => {
     console.log(`❌ Client disconnected: ${socket.id}`);

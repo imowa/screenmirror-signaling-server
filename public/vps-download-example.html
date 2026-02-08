@@ -3,110 +3,572 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VPS Download Example</title>
+    <title>Remote File Download - Android to PC</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 50px auto;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
             padding: 20px;
         }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
         .section {
-            margin: 20px 0;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border-left: 4px solid #667eea;
         }
+
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .status-connected {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-connecting {
+            background: #fff3cd;
+            color: #856404;
+        }
+
         button {
-            padding: 10px 20px;
-            margin: 5px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.3s;
+            margin: 5px;
         }
-        .log {
-            background: #f5f5f5;
-            padding: 10px;
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        button.secondary {
+            background: #6c757d;
+        }
+
+        button.secondary:hover {
+            background: #5a6268;
+        }
+
+        button.success {
+            background: #28a745;
+        }
+
+        button.success:hover {
+            background: #218838;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
             margin: 10px 0;
-            border-radius: 3px;
+            transition: border-color 0.3s;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .device-info {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: #666;
+        }
+
+        .quick-folders {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .folder-btn {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+            padding: 10px;
+            font-size: 13px;
+        }
+
+        .folder-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .download-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .download-url {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            word-break: break-all;
             font-family: monospace;
+            font-size: 12px;
+            margin: 15px 0;
+        }
+
+        .log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
             font-size: 12px;
             max-height: 300px;
             overflow-y: auto;
+            line-height: 1.6;
         }
-        .success { color: green; }
-        .error { color: red; }
-        .info { color: blue; }
-        select {
-            padding: 8px;
+
+        .log-entry {
             margin: 5px 0;
-            width: 100%;
-            max-width: 500px;
         }
-        .device-item {
-            padding: 5px;
-            margin: 2px 0;
+
+        .log-success { color: #4ec9b0; }
+        .log-error { color: #f48771; }
+        .log-info { color: #9cdcfe; }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 15px 0;
+            display: none;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        .help-text {
+            font-size: 13px;
+            color: #666;
+            margin-top: 10px;
+            padding: 10px;
+            background: #fff3cd;
+            border-radius: 6px;
+            border-left: 3px solid #ffc107;
+        }
+
+        .step-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
         }
     </style>
 </head>
 <body>
-    <h1>VPS Download Example</h1>
-    <p>This example demonstrates how to download files from Android devices via VPS upload.</p>
+    <div class="container">
+        <div class="header">
+            <h1>📱 Remote File Download</h1>
+            <p>Download files from your Android device to your computer via VPS</p>
+        </div>
 
-    <div class="section">
-        <h2>Step 1: Connect to Signaling Server</h2>
-        <button onclick="connectToServer()">Connect</button>
-        <div id="connectionStatus">Not connected</div>
-    </div>
+        <div class="content">
+            <!-- Step 1: Connection -->
+            <div class="section">
+                <h2><span class="step-number">1</span>Connection Status</h2>
+                <div id="connectionStatus" class="status-badge status-disconnected">Disconnected</div>
+                <button onclick="connectToServer()" id="connectBtn">Connect to Server</button>
+            </div>
 
-    <div class="section">
-        <h2>Step 1.5: Select Device</h2>
-        <button onclick="refreshDevices()">Refresh Devices</button>
-        <br><br>
-        <select id="deviceSelect" onchange="onDeviceSelected()">
-            <option value="">-- Select a device --</option>
-        </select>
-        <div id="deviceInfo" style="margin-top: 10px; color: #666;"></div>
-    </div>
+            <!-- Step 2: Device Selection -->
+            <div class="section">
+                <h2><span class="step-number">2</span>Select Your Device</h2>
+                <button onclick="refreshDevices()" class="secondary">🔄 Refresh Devices</button>
+                <select id="deviceSelect" onchange="onDeviceSelected()">
+                    <option value="">-- Select your Android device --</option>
+                </select>
+                <div id="deviceInfo" class="device-info" style="display: none;"></div>
+                <div class="help-text">
+                    💡 Make sure your Android app is running and connected to the internet
+                </div>
+            </div>
 
-    <div class="section">
-        <h2>Step 2: Request VPS Upload</h2>
-        <p>Enter file path to upload to VPS:</p>
-        <input type="text" id="deviceId" placeholder="Device ID (auto-filled)" style="width: 300px;" readonly>
-        <br><br>
-        <input type="text" id="filePath" placeholder="File path (e.g., /storage/emulated/0/DCIM/Camera/IMG_001.jpg)" style="width: 500px;">
-        <br><br>
-        <button onclick="requestVpsUpload()">Request VPS Upload</button>
-    </div>
+            <!-- Step 3: File Selection -->
+            <div class="section">
+                <h2><span class="step-number">3</span>Choose File to Download</h2>
 
-    <div class="section">
-        <h2>Step 3: Download from VPS</h2>
-        <p>Once the upload completes, the download URL will appear here:</p>
-        <div id="downloadUrl">Waiting for upload...</div>
-        <br>
-        <button id="downloadBtn" onclick="downloadFromVps()" disabled>Download File</button>
-    </div>
+                <p style="margin-bottom: 10px; color: #666; font-size: 14px;">Quick access to common folders:</p>
+                <div class="quick-folders">
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/DCIM/Camera')">📷 Camera</button>
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Download')">📥 Downloads</button>
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Pictures')">🖼️ Pictures</button>
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Documents')">📄 Documents</button>
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Movies')">🎬 Videos</button>
+                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Music')">🎵 Music</button>
+                </div>
 
-    <div class="section">
-        <h2>Log</h2>
-        <div id="log" class="log"></div>
+                <!-- File Browser -->
+                <div id="fileBrowser" style="display: none; margin: 20px 0;">
+                    <div style="background: white; border-radius: 8px; padding: 15px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div style="font-weight: 600; color: #333;">📁 <span id="currentPath">/storage/emulated/0</span></div>
+                            <button onclick="closeBrowser()" class="secondary" style="padding: 6px 12px; font-size: 12px;">✕ Close</button>
+                        </div>
+                        <div id="fileList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px;">
+                            <div style="padding: 20px; text-align: center; color: #999;">
+                                Loading files...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <p style="margin: 15px 0 5px 0; color: #666; font-size: 14px;">Selected file path:</p>
+                <input type="text" id="filePath" placeholder="Click a folder button above to browse files" readonly>
+
+                <div class="help-text">
+                    💡 <strong>Tips:</strong><br>
+                    • Click a folder button above to auto-fill the path<br>
+                    • Add the filename at the end (e.g., IMG_001.jpg)<br>
+                    • Most photos are in: /storage/emulated/0/DCIM/Camera/<br>
+                    • Most downloads are in: /storage/emulated/0/Download/
+                </div>
+
+                <button onclick="requestVpsUpload()" class="success" style="margin-top: 15px; width: 100%;">
+                    📤 Upload to VPS & Get Download Link
+                </button>
+
+                <div class="progress-bar" id="progressBar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+            </div>
+
+            <!-- Step 4: Download -->
+            <div class="section">
+                <h2><span class="step-number">4</span>Download File</h2>
+                <div id="downloadSection">
+                    <p style="color: #666; text-align: center; padding: 20px;">
+                        Waiting for upload to complete...
+                    </p>
+                </div>
+            </div>
+
+            <!-- Log Section -->
+            <div class="section">
+                <h2>📋 Activity Log</h2>
+                <div id="log" class="log"></div>
+            </div>
+        </div>
     </div>
 
     <script>
         let socket = null;
         let currentRequestId = null;
         let currentDownloadUrl = null;
+        let selectedDeviceId = null;
 
-        // Signaling server URL - change this if your server is on a different host
-        const SIGNALING_SERVER_URL = 'http://23d30ea9-059b-4673-9d78-1fa9e5364851.svc.dalang.io';
+        const SIGNALING_SERVER_URL = 'https://23d30ea9-059b-4673-9d78-1fa9e5364851.svc.dalang.io';
 
+        // Logging function
         function log(message, type = 'info') {
             const logDiv = document.getElementById('log');
             const timestamp = new Date().toLocaleTimeString();
-            const className = type === 'error' ? 'error' : type === 'success' ? 'success' : 'info';
-            logDiv.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            const className = type === 'error' ? 'log-error' : type === 'success' ? 'log-success' : 'log-info';
+            logDiv.innerHTML += `<div class="log-entry ${className}">[${timestamp}] ${message}</div>`;
             logDiv.scrollTop = logDiv.scrollHeight;
         }
 
+        // Helper function to set file path
+        function setFilePath(path) {
+            document.getElementById('filePath').value = path;
+            log(`📁 Selected folder: ${path}`, 'info');
+        }
+
+        // File browser state
+        let currentBrowsePath = '';
+        let currentBrowseRequestId = null;
+
+        // Browse folder
+        function browseFolder(path) {
+            if (!selectedDeviceId) {
+                log('❌ Please select a device first', 'error');
+                alert('Please select your Android device first!');
+                return;
+            }
+
+            if (!socket || !socket.connected) {
+                log('❌ Not connected to server', 'error');
+                alert('Not connected to server. Please wait for connection.');
+                return;
+            }
+
+            currentBrowsePath = path;
+            document.getElementById('currentPath').textContent = path;
+            document.getElementById('fileBrowser').style.display = 'block';
+            document.getElementById('fileList').innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">Loading files...</div>';
+
+            requestFileList(path);
+        }
+
+        // Request file list from Android device
+        function requestFileList(path) {
+            currentBrowseRequestId = 'browse_' + Date.now();
+
+            log(`📁 Requesting file list for: ${path}`, 'info');
+
+            socket.emit('browse-files-request', {
+                requestId: currentBrowseRequestId,
+                deviceId: selectedDeviceId,
+                path: path
+            });
+        }
+
+        // Close file browser
+        function closeBrowser() {
+            document.getElementById('fileBrowser').style.display = 'none';
+        }
+
+        // Auto-connect on page load
+        window.addEventListener('load', () => {
+            log('🚀 Page loaded. Connecting to server...', 'info');
+            connectToServer();
+        });
+
+        // Connect to signaling server
+        function connectToServer() {
+            if (socket && socket.connected) {
+                log('Already connected to server', 'info');
+                return;
+            }
+
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.className = 'status-badge status-connecting';
+            statusDiv.textContent = 'Connecting...';
+
+            log('🔌 Connecting to signaling server...', 'info');
+            socket = io(SIGNALING_SERVER_URL);
+
+            socket.on('connect', () => {
+                log('✅ Connected to signaling server', 'success');
+                statusDiv.className = 'status-badge status-connected';
+                statusDiv.textContent = 'Connected';
+                document.getElementById('connectBtn').disabled = true;
+
+                // Auto-refresh devices after connection
+                setTimeout(() => refreshDevices(), 500);
+            });
+
+            socket.on('disconnect', () => {
+                log('❌ Disconnected from signaling server', 'error');
+                statusDiv.className = 'status-badge status-disconnected';
+                statusDiv.textContent = 'Disconnected';
+                document.getElementById('connectBtn').disabled = false;
+            });
+
+            socket.on('vps-upload-response', (data) => {
+                const { requestId, deviceId, downloadUrl, error } = data;
+
+                if (requestId !== currentRequestId) {
+                    return;
+                }
+
+                const progressBar = document.getElementById('progressBar');
+                progressBar.style.display = 'none';
+
+                if (error) {
+                    log(`❌ Upload failed: ${error}`, 'error');
+                    document.getElementById('downloadSection').innerHTML = `
+                        <p style="color: #f48771; text-align: center; padding: 20px;">
+                            ❌ Upload failed: ${error}
+                        </p>
+                    `;
+                } else {
+                    log(`✅ Upload completed! Download URL ready`, 'success');
+                    currentDownloadUrl = downloadUrl;
+
+                    document.getElementById('downloadSection').innerHTML = `
+                        <div class="download-card">
+                            <h3 style="color: #28a745; margin-bottom: 15px;">✅ File Ready for Download!</h3>
+                            <div class="download-url">${downloadUrl}</div>
+                            <button onclick="downloadFromVps()" class="success" style="width: 100%; font-size: 16px;">
+                                📥 Download File to Your Computer
+                            </button>
+                        </div>
+                    `;
+                }
+            });
+
+            socket.on('browse-files-response', (data) => {
+                const { requestId, deviceId, files, error } = data;
+
+                if (requestId !== currentBrowseRequestId) {
+                    return;
+                }
+
+                if (error) {
+                    log(`❌ Browse files failed: ${error}`, 'error');
+                    document.getElementById('fileList').innerHTML = `
+                        <div style="padding: 20px; text-align: center; color: #f48771;">
+                            ❌ Error: ${error}
+                        </div>
+                    `;
+                } else {
+                    log(`✅ Received ${files.length} files/folders`, 'success');
+                    displayFiles(files);
+                }
+            });
+        }
+
+        // Display files in the file browser
+        function displayFiles(files) {
+            const fileListDiv = document.getElementById('fileList');
+
+            if (!files || files.length === 0) {
+                fileListDiv.innerHTML = `
+                    <div style="padding: 20px; text-align: center; color: #999;">
+                        No files found in this directory
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+
+            // Add parent directory link if not at root
+            if (currentBrowsePath !== '/storage/emulated/0') {
+                const parentPath = currentBrowsePath.substring(0, currentBrowsePath.lastIndexOf('/'));
+                html += `
+                    <div onclick="browseFolder('${parentPath}')" style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
+                        <span style="font-size: 20px;">⬆️</span>
+                        <span style="font-weight: 600; color: #667eea;">..</span>
+                        <span style="color: #999; font-size: 12px;">(Parent Directory)</span>
+                    </div>
+                `;
+            }
+
+            // Display files and folders
+            files.forEach(file => {
+                const icon = file.isDirectory ? '📁' : '📄';
+                const sizeText = file.isDirectory ? '' : formatFileSize(file.size);
+                const clickAction = file.isDirectory
+                    ? `browseFolder('${file.path}')`
+                    : `selectFile('${file.path}')`;
+
+                html += `
+                    <div onclick="${clickAction}" style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
+                        <span style="font-size: 20px;">${icon}</span>
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-weight: ${file.isDirectory ? '600' : '400'}; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${file.name}</div>
+                            ${sizeText ? `<div style="font-size: 11px; color: #999;">${sizeText}</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+
+            fileListDiv.innerHTML = html;
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+        }
+
+        // Select file
+        function selectFile(path) {
+            document.getElementById('filePath').value = path;
+            document.getElementById('fileBrowser').style.display = 'none';
+            log(`✅ Selected file: ${path}`, 'success');
+        }
+
+        // Refresh device list
         async function refreshDevices() {
             try {
                 log('🔄 Fetching available devices...', 'info');
@@ -114,98 +576,78 @@
                 const data = await response.json();
 
                 const deviceSelect = document.getElementById('deviceSelect');
-                deviceSelect.innerHTML = '<option value="">-- Select a device --</option>';
+                deviceSelect.innerHTML = '<option value="">-- Select your Android device --</option>';
 
                 if (data.devices && data.devices.length > 0) {
                     data.devices.forEach(device => {
                         const option = document.createElement('option');
                         option.value = device.deviceId;
-                        option.textContent = `${device.name} (${device.type}) - ${device.ipAddress || 'No IP'}`;
+                        option.textContent = `${device.name} (${device.type})`;
                         option.dataset.deviceInfo = JSON.stringify(device);
                         deviceSelect.appendChild(option);
                     });
                     log(`✅ Found ${data.devices.length} device(s)`, 'success');
                 } else {
-                    log('⚠️ No devices found. Make sure your Android device is connected.', 'error');
+                    log('⚠️ No devices found. Make sure your Android app is running.', 'error');
                 }
             } catch (err) {
                 log(`❌ Error fetching devices: ${err.message}`, 'error');
             }
         }
 
+        // Device selection handler
         function onDeviceSelected() {
             const deviceSelect = document.getElementById('deviceSelect');
             const selectedOption = deviceSelect.options[deviceSelect.selectedIndex];
 
             if (selectedOption.value) {
                 const deviceInfo = JSON.parse(selectedOption.dataset.deviceInfo);
-                document.getElementById('deviceId').value = deviceInfo.deviceId;
-                document.getElementById('deviceInfo').innerHTML =
-                    `<strong>Selected:</strong> ${deviceInfo.name} (${deviceInfo.type})<br>` +
-                    `<strong>IP:</strong> ${deviceInfo.ipAddress || 'N/A'}<br>` +
-                    `<strong>Status:</strong> ${deviceInfo.status}`;
+                selectedDeviceId = deviceInfo.deviceId;
+
+                const deviceInfoDiv = document.getElementById('deviceInfo');
+                deviceInfoDiv.style.display = 'block';
+                deviceInfoDiv.innerHTML = `
+                    <strong>📱 Device:</strong> ${deviceInfo.name}<br>
+                    <strong>🔧 Type:</strong> ${deviceInfo.type}<br>
+                    <strong>🌐 IP:</strong> ${deviceInfo.ipAddress || 'N/A'}<br>
+                    <strong>✅ Status:</strong> ${deviceInfo.status}
+                `;
                 log(`✅ Selected device: ${deviceInfo.name}`, 'success');
             } else {
-                document.getElementById('deviceId').value = '';
-                document.getElementById('deviceInfo').innerHTML = '';
+                selectedDeviceId = null;
+                document.getElementById('deviceInfo').style.display = 'none';
             }
         }
 
-        function connectToServer() {
-            if (socket && socket.connected) {
-                log('Already connected', 'info');
+        // Request VPS upload
+        async function requestVpsUpload() {
+            const filePath = document.getElementById('filePath').value.trim();
+
+            if (!selectedDeviceId) {
+                log('❌ Please select a device first', 'error');
+                alert('Please select your Android device first!');
                 return;
             }
 
-            log('Connecting to signaling server...', 'info');
-            socket = io(SIGNALING_SERVER_URL);
-
-            socket.on('connect', () => {
-                log('✅ Connected to signaling server', 'success');
-                document.getElementById('connectionStatus').innerHTML = '<span class="success">Connected</span>';
-            });
-
-            socket.on('disconnect', () => {
-                log('❌ Disconnected from signaling server', 'error');
-                document.getElementById('connectionStatus').innerHTML = '<span class="error">Disconnected</span>';
-            });
-
-            // Listen for VPS upload response
-            socket.on('vps-upload-response', (data) => {
-                const { requestId, deviceId, downloadUrl, error } = data;
-
-                if (requestId !== currentRequestId) {
-                    return; // Not our request
-                }
-
-                if (error) {
-                    log(`❌ VPS upload failed: ${error}`, 'error');
-                    document.getElementById('downloadUrl').innerHTML = `<span class="error">Error: ${error}</span>`;
-                } else {
-                    log(`✅ VPS upload completed! Download URL: ${downloadUrl}`, 'success');
-                    currentDownloadUrl = downloadUrl;
-                    document.getElementById('downloadUrl').innerHTML = `<span class="success">${downloadUrl}</span>`;
-                    document.getElementById('downloadBtn').disabled = false;
-                }
-            });
-        }
-
-        async function requestVpsUpload() {
-            const deviceId = document.getElementById('deviceId').value.trim();
-            const filePath = document.getElementById('filePath').value.trim();
-
-            if (!deviceId || !filePath) {
-                log('❌ Please enter device ID and file path', 'error');
+            if (!filePath) {
+                log('❌ Please enter a file path', 'error');
+                alert('Please enter a file path!');
                 return;
             }
 
             if (!socket || !socket.connected) {
-                log('❌ Not connected to server. Please connect first.', 'error');
+                log('❌ Not connected to server', 'error');
+                alert('Not connected to server. Please wait for connection.');
                 return;
             }
 
             try {
-                log(`📤 Requesting VPS upload: deviceId=${deviceId}, path=${filePath}`, 'info');
+                log(`📤 Requesting upload: ${filePath}`, 'info');
+
+                // Show progress bar
+                const progressBar = document.getElementById('progressBar');
+                progressBar.style.display = 'block';
+                document.getElementById('progressFill').style.width = '50%';
 
                 const response = await fetch(`${SIGNALING_SERVER_URL}/api/vps/upload`, {
                     method: 'POST',
@@ -213,7 +655,7 @@
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        deviceId: deviceId,
+                        deviceId: selectedDeviceId,
                         path: filePath
                     })
                 });
@@ -224,26 +666,34 @@
                     currentRequestId = result.requestId;
                     log(`✅ Upload request sent. Request ID: ${result.requestId}`, 'success');
                     log('⏳ Waiting for device to upload file to VPS...', 'info');
-                    document.getElementById('downloadUrl').innerHTML = '<span class="info">Uploading to VPS...</span>';
+
+                    document.getElementById('downloadSection').innerHTML = `
+                        <p style="color: #667eea; text-align: center; padding: 20px;">
+                            ⏳ Uploading file to VPS...<br>
+                            <small>This may take a while for large files</small>
+                        </p>
+                    `;
                 } else {
                     log(`❌ Upload request failed: ${result.error}`, 'error');
+                    progressBar.style.display = 'none';
+                    alert(`Upload request failed: ${result.error}`);
                 }
             } catch (err) {
-                log(`❌ Error requesting VPS upload: ${err.message}`, 'error');
+                log(`❌ Error requesting upload: ${err.message}`, 'error');
+                document.getElementById('progressBar').style.display = 'none';
+                alert(`Error: ${err.message}`);
             }
         }
 
+        // Download from VPS
         function downloadFromVps() {
             if (!currentDownloadUrl) {
                 log('❌ No download URL available', 'error');
                 return;
             }
 
-            log(`📥 Downloading from VPS: ${currentDownloadUrl}`, 'info');
-
-            // Open download URL in new tab
+            log(`📥 Opening download: ${currentDownloadUrl}`, 'info');
             window.open(currentDownloadUrl, '_blank');
-
             log('✅ Download started in new tab', 'success');
         }
     </script>
