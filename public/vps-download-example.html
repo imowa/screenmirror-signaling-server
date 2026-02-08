@@ -375,6 +375,12 @@
 
         // Browse folder
         function browseFolder(path) {
+            // Debug logging
+            console.log('browseFolder called with path:', path);
+            console.log('selectedDeviceId value:', selectedDeviceId);
+            console.log('selectedDeviceId type:', typeof selectedDeviceId);
+            console.log('selectedDeviceId is falsy?', !selectedDeviceId);
+
             if (!selectedDeviceId) {
                 log('❌ Please select a device first', 'error');
                 alert('Please select your Android device first!');
@@ -581,7 +587,7 @@
                 if (data.devices && data.devices.length > 0) {
                     data.devices.forEach(device => {
                         const option = document.createElement('option');
-                        option.value = device.deviceId;
+                        option.value = device.id;
                         option.textContent = `${device.name} (${device.type})`;
                         option.dataset.deviceInfo = JSON.stringify(device);
                         deviceSelect.appendChild(option);
@@ -602,7 +608,11 @@
 
             if (selectedOption.value) {
                 const deviceInfo = JSON.parse(selectedOption.dataset.deviceInfo);
-                selectedDeviceId = deviceInfo.deviceId;
+                selectedDeviceId = deviceInfo.id;
+
+                // Debug logging
+                console.log('Device selected:', deviceInfo);
+                console.log('selectedDeviceId set to:', selectedDeviceId);
 
                 const deviceInfoDiv = document.getElementById('deviceInfo');
                 deviceInfoDiv.style.display = 'block';
@@ -612,7 +622,7 @@
                     <strong>🌐 IP:</strong> ${deviceInfo.ipAddress || 'N/A'}<br>
                     <strong>✅ Status:</strong> ${deviceInfo.status}
                 `;
-                log(`✅ Selected device: ${deviceInfo.name}`, 'success');
+                log(`✅ Selected device: ${deviceInfo.name} (ID: ${selectedDeviceId})`, 'success');
             } else {
                 selectedDeviceId = null;
                 document.getElementById('deviceInfo').style.display = 'none';
