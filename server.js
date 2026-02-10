@@ -12,6 +12,11 @@ const PORT = process.env.PORT || 3001;
 const app = express();
 const server = http.createServer(app);
 
+// Configure HTTP server timeouts for large file uploads
+server.timeout = 7200000; // 2 hours (for very large files)
+server.keepAliveTimeout = 7200000; // 2 hours
+server.headersTimeout = 7200000; // 2 hours
+
 // Attach Socket.IO to the HTTP server
 const io = new Server(server, {
   cors: {
