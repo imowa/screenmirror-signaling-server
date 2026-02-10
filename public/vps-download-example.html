@@ -346,6 +346,10 @@
         let currentDownloadUrl = null;
         let selectedDeviceId = null;
 
+        // Upload speed tracking
+        let lastUploadTime = null;
+        let lastUploadBytes = 0;
+
         const SIGNALING_SERVER_URL = 'https://23d30ea9-059b-4673-9d78-1fa9e5364851.svc.dalang.io';
 
         // Logging function
@@ -483,7 +487,22 @@
             socket.on('ftp-upload-progress', (data) => {
                 const { uploadId, bytesUploaded, totalBytes, percentage } = data;
 
-                log(`📊 Upload progress: ${percentage}% (${formatFileSize(bytesUploaded)} / ${formatFileSize(totalBytes)})`, 'info');
+                // Calculate upload speed
+                const now = Date.now();
+                let speedText = '';
+
+                if (lastUploadTime && lastUploadBytes > 0) {
+                    const timeDiff = (now - lastUploadTime) / 1000; // seconds
+                    const bytesDiff = bytesUploaded - lastUploadBytes;
+                    const speed = bytesDiff / timeDiff; // bytes per second
+
+                    speedText = formatSpeed(speed);
+                }
+
+                lastUploadTime = now;
+                lastUploadBytes = bytesUploaded;
+
+                log(`📊 Upload progress: ${percentage}% (${formatFileSize(bytesUploaded)} / ${formatFileSize(totalBytes)})${speedText ? ' - ' + speedText : ''}`, 'info');
 
                 // Update progress bar
                 const progressBar = document.getElementById('progressBar');
@@ -491,12 +510,13 @@
                 progressBar.style.display = 'block';
                 progressFill.style.width = `${percentage}%`;
 
-                // Update download section with progress
+                // Update download section with progress and speed
                 document.getElementById('downloadSection').innerHTML = `
                     <p style="color: #667eea; text-align: center; padding: 20px;">
                         ⏳ Uploading file to VPS...<br>
                         <strong style="font-size: 24px;">${percentage}%</strong><br>
                         <small>${formatFileSize(bytesUploaded)} / ${formatFileSize(totalBytes)}</small>
+                        ${speedText ? `<br><small style="color: #28a745;">⚡ ${speedText}</small>` : ''}
                     </p>
                 `;
             });
@@ -615,6 +635,13 @@
             if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
             if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
             return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+        }
+
+        // Format upload/download speed
+        function formatSpeed(bytesPerSecond) {
+            if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s';
+            if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s';
+            return (bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s';
         }
 
         // Select file
