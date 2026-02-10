@@ -1162,7 +1162,7 @@ app.get('/api/apps/list', (req, res) => {
 // ============================================
 
 // TUS upload endpoint - handles all TUS protocol requests
-app.all('/tus/*', (req, res) => {
+app.use('/tus', (req, res) => {
   tusServer.handle(req, res);
 });
 
