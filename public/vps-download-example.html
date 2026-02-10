@@ -283,21 +283,15 @@
             <div class="section">
                 <h2><span class="step-number">3</span>Choose File to Download</h2>
 
-                <p style="margin-bottom: 10px; color: #666; font-size: 14px;">Quick access to common folders:</p>
-                <div class="quick-folders">
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/DCIM/Camera')">📷 Camera</button>
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Download')">📥 Downloads</button>
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Pictures')">🖼️ Pictures</button>
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Documents')">📄 Documents</button>
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Movies')">🎬 Videos</button>
-                    <button class="folder-btn" onclick="browseFolder('/storage/emulated/0/Music')">🎵 Music</button>
-                </div>
+                <p style="margin-bottom: 10px; color: #666; font-size: 14px;">Browse your device storage:</p>
+                <button class="folder-btn" onclick="browseFolder('/')" style="width: 100%; max-width: 300px; padding: 12px 20px; font-size: 16px;">
+                    📂 Browse Files from Root
+                </button>
 
                 <!-- File Browser -->
                 <div id="fileBrowser" style="display: none; margin: 20px 0;">
                     <div style="background: white; border-radius: 8px; padding: 15px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                            <div style="font-weight: 600; color: #333;">📁 <span id="currentPath">/storage/emulated/0</span></div>
+                        <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
                             <button onclick="closeBrowser()" class="secondary" style="padding: 6px 12px; font-size: 12px;">✕ Close</button>
                         </div>
                         <div id="fileList" style="max-height: 400px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px;">
@@ -373,45 +367,41 @@
         let currentBrowsePath = '';
         let currentBrowseRequestId = null;
 
-        // Browse folder
-        function browseFolder(path) {
-            // Debug logging
-            console.log('browseFolder called with path:', path);
-            console.log('selectedDeviceId value:', selectedDeviceId);
-            console.log('selectedDeviceId type:', typeof selectedDeviceId);
-            console.log('selectedDeviceId is falsy?', !selectedDeviceId);
-
+        // Browse folder using FTP API
+        async function browseFolder(path, sortBy = 'date-desc', offset = 0, append = false) {
             if (!selectedDeviceId) {
                 log('❌ Please select a device first', 'error');
                 alert('Please select your Android device first!');
                 return;
             }
 
-            if (!socket || !socket.connected) {
-                log('❌ Not connected to server', 'error');
-                alert('Not connected to server. Please wait for connection.');
-                return;
+            currentBrowsePath = path;
+            const fileBrowser = document.getElementById('fileBrowser');
+            const fileList = document.getElementById('fileList');
+
+            fileBrowser.style.display = 'block';
+
+            if (!append) {
+                fileList.innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">⏳ Loading files...</div>';
             }
 
-            currentBrowsePath = path;
-            document.getElementById('currentPath').textContent = path;
-            document.getElementById('fileBrowser').style.display = 'block';
-            document.getElementById('fileList').innerHTML = '<div style="padding: 20px; text-align: center; color: #999;">Loading files...</div>';
+            try {
+                log(`📁 Requesting file list for: ${path}`, 'info');
+                const res = await fetch(`${SIGNALING_SERVER_URL}/api/ftp/browse?deviceId=${selectedDeviceId}&path=${encodeURIComponent(path)}&limit=200&offset=${offset}&sortBy=${sortBy}`);
+                const data = await res.json();
 
-            requestFileList(path);
-        }
+                if (data.error) {
+                    fileList.innerHTML = `<div style="padding: 20px; text-align: center; color: #dc3545;">❌ ${data.error}</div>`;
+                    log(`❌ Error: ${data.error}`, 'error');
+                    return;
+                }
 
-        // Request file list from Android device
-        function requestFileList(path) {
-            currentBrowseRequestId = 'browse_' + Date.now();
-
-            log(`📁 Requesting file list for: ${path}`, 'info');
-
-            socket.emit('browse-files-request', {
-                requestId: currentBrowseRequestId,
-                deviceId: selectedDeviceId,
-                path: path
-            });
+                displayFiles(data, path, sortBy, offset, append);
+                log(`✅ Loaded ${data.files.length} items from ${path}`, 'success');
+            } catch (err) {
+                fileList.innerHTML = `<div style="padding: 20px; text-align: center; color: #dc3545;">❌ Error: ${err.message}</div>`;
+                log(`❌ Error loading files: ${err.message}`, 'error');
+            }
         }
 
         // Close file browser
@@ -488,75 +478,92 @@
                     `;
                 }
             });
-
-            socket.on('browse-files-response', (data) => {
-                const { requestId, deviceId, files, error } = data;
-
-                if (requestId !== currentBrowseRequestId) {
-                    return;
-                }
-
-                if (error) {
-                    log(`❌ Browse files failed: ${error}`, 'error');
-                    document.getElementById('fileList').innerHTML = `
-                        <div style="padding: 20px; text-align: center; color: #f48771;">
-                            ❌ Error: ${error}
-                        </div>
-                    `;
-                } else {
-                    log(`✅ Received ${files.length} files/folders`, 'success');
-                    displayFiles(files);
-                }
-            });
         }
 
         // Display files in the file browser
-        function displayFiles(files) {
+        function displayFiles(data, path, sortBy, offset, append) {
             const fileListDiv = document.getElementById('fileList');
-
-            if (!files || files.length === 0) {
-                fileListDiv.innerHTML = `
-                    <div style="padding: 20px; text-align: center; color: #999;">
-                        No files found in this directory
-                    </div>
-                `;
-                return;
-            }
 
             let html = '';
 
-            // Add parent directory link if not at root
-            if (currentBrowsePath !== '/storage/emulated/0') {
-                const parentPath = currentBrowsePath.substring(0, currentBrowsePath.lastIndexOf('/'));
+            // Breadcrumb navigation (only if not appending)
+            if (!append) {
+                const parentPath = path === '/' ? '/' : path.split('/').slice(0, -1).join('/') || '/';
                 html += `
-                    <div onclick="browseFolder('${parentPath}')" style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
-                        <span style="font-size: 20px;">⬆️</span>
-                        <span style="font-weight: 600; color: #667eea;">..</span>
-                        <span style="color: #999; font-size: 12px;">(Parent Directory)</span>
+                    <div style="background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-weight: 600; color: #333;">📍 ${path}</span>
+                                ${path !== '/' ? `<button onclick="browseFolder('/', '${sortBy}', 0, false)" class="secondary" style="padding: 4px 8px; font-size: 12px;">🏠 Home</button>` : ''}
+                                ${path !== '/' ? `<button onclick="browseFolder('${parentPath}', '${sortBy}', 0, false)" class="secondary" style="padding: 4px 8px; font-size: 12px;">⬆️ Up</button>` : ''}
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label style="font-size: 12px; color: #666;">Sort:</label>
+                                <select onchange="browseFolder('${path}', this.value, 0, false)" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #ddd; font-size: 12px;">
+                                    <option value="date-desc" ${sortBy === 'date-desc' ? 'selected' : ''}>Date (Newest)</option>
+                                    <option value="date-asc" ${sortBy === 'date-asc' ? 'selected' : ''}>Date (Oldest)</option>
+                                    <option value="size-desc" ${sortBy === 'size-desc' ? 'selected' : ''}>Size (Largest)</option>
+                                    <option value="size-asc" ${sortBy === 'size-asc' ? 'selected' : ''}>Size (Smallest)</option>
+                                    <option value="name-asc" ${sortBy === 'name-asc' ? 'selected' : ''}>Name (A-Z)</option>
+                                    <option value="name-desc" ${sortBy === 'name-desc' ? 'selected' : ''}>Name (Z-A)</option>
+                                </select>
+                            </div>
+                        </div>
                     </div>
                 `;
             }
 
-            // Display files and folders
-            files.forEach(file => {
-                const icon = file.isDirectory ? '📁' : '📄';
-                const sizeText = file.isDirectory ? '' : formatFileSize(file.size);
-                const clickAction = file.isDirectory
-                    ? `browseFolder('${file.path}')`
-                    : `selectFile('${file.path}')`;
+            // File list
+            if (data.files.length === 0 && !append) {
+                html += '<div style="padding: 20px; text-align: center; color: #999;">📭 This folder is empty</div>';
+            } else {
+                data.files.forEach(file => {
+                    if (file.type === 'directory') {
+                        const newPath = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
+                        html += `
+                            <div onclick="browseFolder('${newPath}', '${sortBy}', 0, false)" style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
+                                <span style="font-size: 20px;">📁</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 600; color: #333;">${file.name}</div>
+                                    <div style="font-size: 11px; color: #999;">Folder</div>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        const filePath = file.path || (path === '/' ? `/${file.name}` : `${path}/${file.name}`);
+                        const fileSize = formatFileSize(file.size);
+                        html += `
+                            <div style="padding: 12px; border-bottom: 1px solid #f0f0f0; display: flex; align-items: center; gap: 10px; justify-content: space-between;">
+                                <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
+                                    <span style="font-size: 20px;">📄</span>
+                                    <div style="flex: 1; min-width: 0;">
+                                        <div style="color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${file.name}</div>
+                                        <div style="font-size: 11px; color: #999;">${fileSize}</div>
+                                    </div>
+                                </div>
+                                <button onclick="selectFile('${filePath}'); event.stopPropagation();" class="secondary" style="padding: 6px 12px; font-size: 12px; white-space: nowrap;">✓ Select</button>
+                            </div>
+                        `;
+                    }
+                });
+            }
 
+            // Load More button
+            if (data.hasMore) {
                 html += `
-                    <div onclick="${clickAction}" style="padding: 12px; border-bottom: 1px solid #f0f0f0; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: background 0.2s;" onmouseover="this.style.background='#f8f9fa'" onmouseout="this.style.background='white'">
-                        <span style="font-size: 20px;">${icon}</span>
-                        <div style="flex: 1; min-width: 0;">
-                            <div style="font-weight: ${file.isDirectory ? '600' : '400'}; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${file.name}</div>
-                            ${sizeText ? `<div style="font-size: 11px; color: #999;">${sizeText}</div>` : ''}
-                        </div>
+                    <div style="text-align: center; padding: 15px;">
+                        <button onclick="browseFolder('${path}', '${sortBy}', ${offset + data.files.length}, true)" class="secondary" style="padding: 10px 20px;">
+                            📄 Load More Files
+                        </button>
                     </div>
                 `;
-            });
+            }
 
-            fileListDiv.innerHTML = html;
+            if (append) {
+                fileListDiv.innerHTML += html;
+            } else {
+                fileListDiv.innerHTML = html;
+            }
         }
 
         // Format file size
