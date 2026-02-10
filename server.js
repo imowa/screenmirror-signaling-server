@@ -4,6 +4,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { Client: FtpClient } = require('basic-ftp');
+const { tusServer } = require('./tus-upload-server');
 
 const PORT = process.env.PORT || 3001;
 
@@ -27,6 +28,9 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
+
+// Make io available to TUS hooks
+app.set('io', io);
 
 // Store connected devices
 const devices = new Map();
@@ -1153,6 +1157,31 @@ app.get('/api/apps/list', (req, res) => {
   });
 });
 
+// ============================================
+// TUS Upload Routes (Resumable Uploads)
+// ============================================
+
+// TUS upload endpoint - handles all TUS protocol requests
+app.all('/tus/*', (req, res) => {
+  tusServer.handle(req, res);
+});
+
+// Get upload status endpoint
+app.get('/api/tus/status/:uploadId', async (req, res) => {
+  try {
+    const upload = await tusServer.getUpload(req.params.uploadId);
+    res.json({
+      id: upload.id,
+      size: upload.size,
+      offset: upload.offset,
+      metadata: upload.metadata,
+      percentage: Math.round((upload.offset / upload.size) * 100)
+    });
+  } catch (err) {
+    res.status(404).json({ error: 'Upload not found' });
+  }
+});
+
 
 console.log(`🚀 Signaling server starting on port ${PORT}...`);
 console.log(`🔧 Server version: Updated with register_device handler and enhanced logging`);
@@ -1537,6 +1566,54 @@ function startMirroring(targetDeviceId, options = {}) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { startMirroring, devices };
 }
+
+// ============================================
+// TUS Upload Cleanup Job
+// ============================================
+
+const fs = require('fs').promises;
+const path = require('path');
+const { UPLOAD_DIR } = require('./tus-upload-server');
+
+// Clean up abandoned uploads every 6 hours
+const CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+const MAX_UPLOAD_AGE = 24 * 60 * 60 * 1000; // 24 hours
+
+async function cleanupAbandonedUploads() {
+  console.log('🧹 Running TUS upload cleanup...');
+
+  try {
+    const files = await fs.readdir(UPLOAD_DIR);
+    const now = Date.now();
+    let deletedCount = 0;
+
+    for (const file of files) {
+      const filePath = path.join(UPLOAD_DIR, file);
+      const stats = await fs.stat(filePath);
+
+      // Delete files older than 24 hours
+      if (now - stats.mtimeMs > MAX_UPLOAD_AGE) {
+        await fs.unlink(filePath);
+        deletedCount++;
+        console.log(`   Deleted abandoned upload: ${file}`);
+      }
+    }
+
+    if (deletedCount > 0) {
+      console.log(`✅ Cleanup completed: ${deletedCount} file(s) deleted`);
+    } else {
+      console.log('✅ Cleanup completed: No abandoned uploads found');
+    }
+  } catch (err) {
+    console.error('❌ Cleanup error:', err);
+  }
+}
+
+// Run cleanup on startup
+cleanupAbandonedUploads();
+
+// Schedule periodic cleanup
+setInterval(cleanupAbandonedUploads, CLEANUP_INTERVAL);
 
 // Start the HTTP server
 server.listen(PORT, () => {
