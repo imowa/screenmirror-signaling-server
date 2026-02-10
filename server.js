@@ -208,6 +208,7 @@ app.get('/', (req, res) => {
     <head>
       <title>Screen Mirror File Browser</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <script src="/socket.io/socket.io.js"></script>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -522,6 +523,9 @@ app.get('/', (req, res) => {
       <script>
         let currentDevice = null;
         let currentPath = '/';
+        let lastUploadTime = null;
+        let lastUploadBytes = 0;
+        let socket = null;
 
         async function loadServerStatus() {
           try {
@@ -810,6 +814,94 @@ app.get('/', (req, res) => {
 
         function downloadFile(deviceId, remotePath, filename) {
           window.location.href = \`/api/ftp/download?deviceId=\${deviceId}&path=\${encodeURIComponent(remotePath)}&filename=\${encodeURIComponent(filename)}\`;
+        }
+
+        // Format upload/download speed
+        function formatSpeed(bytesPerSecond) {
+          if (bytesPerSecond < 1024) return bytesPerSecond.toFixed(0) + ' B/s';
+          if (bytesPerSecond < 1024 * 1024) return (bytesPerSecond / 1024).toFixed(1) + ' KB/s';
+          return (bytesPerSecond / (1024 * 1024)).toFixed(1) + ' MB/s';
+        }
+
+        // Initialize socket.io connection
+        socket = io();
+
+        // Listen for TUS upload progress
+        socket.on('ftp-upload-progress', (data) => {
+          const { uploadId, bytesUploaded, totalBytes, percentage } = data;
+
+          // Calculate upload speed
+          const now = Date.now();
+          let speedText = '';
+
+          if (lastUploadTime && lastUploadBytes > 0) {
+            const timeDiff = (now - lastUploadTime) / 1000; // seconds
+            const bytesDiff = bytesUploaded - lastUploadBytes;
+            const speed = bytesDiff / timeDiff; // bytes per second
+            speedText = formatSpeed(speed);
+          }
+
+          lastUploadTime = now;
+          lastUploadBytes = bytesUploaded;
+
+          // Show progress in a modal or notification area
+          showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText);
+        });
+
+        // Listen for upload completion
+        socket.on('ftp-upload-complete', (data) => {
+          const { uploadId, downloadUrl } = data;
+          showUploadComplete(downloadUrl);
+        });
+
+        // Listen for upload errors
+        socket.on('ftp-upload-error', (data) => {
+          const { uploadId, error } = data;
+          showUploadError(error);
+        });
+
+        function showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText) {
+          // Create or update progress display
+          let progressDiv = document.getElementById('upload-progress');
+          if (!progressDiv) {
+            progressDiv = document.createElement('div');
+            progressDiv.id = 'upload-progress';
+            progressDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.3); z-index: 1000; min-width: 300px;';
+            document.body.appendChild(progressDiv);
+          }
+
+          progressDiv.innerHTML = \`
+            <h3 style="color: #667eea; margin-bottom: 10px;">📤 Uploading to VPS</h3>
+            <div style="background: #f0f0f0; border-radius: 5px; height: 20px; overflow: hidden; margin-bottom: 10px;">
+              <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: \${percentage}%; transition: width 0.3s;"></div>
+            </div>
+            <p style="color: #333; font-size: 1.1em; font-weight: bold; margin-bottom: 5px;">\${percentage}%</p>
+            <p style="color: #666; font-size: 0.9em;">\${formatFileSize(bytesUploaded)} / \${formatFileSize(totalBytes)}</p>
+            \${speedText ? \`<p style="color: #28a745; font-size: 0.9em; margin-top: 5px;">⚡ \${speedText}</p>\` : ''}
+          \`;
+        }
+
+        function showUploadComplete(downloadUrl) {
+          const progressDiv = document.getElementById('upload-progress');
+          if (progressDiv) {
+            progressDiv.innerHTML = \`
+              <h3 style="color: #28a745; margin-bottom: 10px;">✅ Upload Complete!</h3>
+              <p style="color: #666; margin-bottom: 15px;">File is ready for download</p>
+              <a href="\${downloadUrl}" target="_blank" style="display: inline-block; background: linear-gradient(90deg, #667eea, #764ba2); color: white; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold;">⬇️ Download File</a>
+              <button onclick="document.getElementById('upload-progress').remove()" style="display: block; margin-top: 10px; background: #f0f0f0; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; width: 100%;">Close</button>
+            \`;
+          }
+        }
+
+        function showUploadError(error) {
+          const progressDiv = document.getElementById('upload-progress');
+          if (progressDiv) {
+            progressDiv.innerHTML = \`
+              <h3 style="color: #dc3545; margin-bottom: 10px;">❌ Upload Failed</h3>
+              <p style="color: #666; margin-bottom: 15px;">\${error}</p>
+              <button onclick="document.getElementById('upload-progress').remove()" style="background: #f0f0f0; border: none; padding: 8px 15px; border-radius: 5px; cursor: pointer; width: 100%;">Close</button>
+            \`;
+          }
         }
 
         // Load devices on page load
