@@ -478,6 +478,49 @@
                     `;
                 }
             });
+
+            // TUS upload progress tracking
+            socket.on('ftp-upload-progress', (data) => {
+                const { uploadId, bytesUploaded, totalBytes, percentage } = data;
+
+                log(`📊 Upload progress: ${percentage}% (${formatFileSize(bytesUploaded)} / ${formatFileSize(totalBytes)})`, 'info');
+
+                // Update progress bar
+                const progressBar = document.getElementById('progressBar');
+                const progressFill = document.getElementById('progressFill');
+                progressBar.style.display = 'block';
+                progressFill.style.width = `${percentage}%`;
+
+                // Update download section with progress
+                document.getElementById('downloadSection').innerHTML = `
+                    <p style="color: #667eea; text-align: center; padding: 20px;">
+                        ⏳ Uploading file to VPS...<br>
+                        <strong style="font-size: 24px;">${percentage}%</strong><br>
+                        <small>${formatFileSize(bytesUploaded)} / ${formatFileSize(totalBytes)}</small>
+                    </p>
+                `;
+            });
+
+            // TUS upload complete
+            socket.on('ftp-upload-complete', (data) => {
+                const { uploadId, deviceId, filename, size, path } = data;
+                log(`✅ TUS upload completed: ${filename} (${formatFileSize(size)})`, 'success');
+            });
+
+            // TUS upload error
+            socket.on('ftp-upload-error', (data) => {
+                const { uploadId, error } = data;
+                log(`❌ TUS upload error: ${error}`, 'error');
+
+                const progressBar = document.getElementById('progressBar');
+                progressBar.style.display = 'none';
+
+                document.getElementById('downloadSection').innerHTML = `
+                    <p style="color: #f48771; text-align: center; padding: 20px;">
+                        ❌ Upload failed: ${error}
+                    </p>
+                `;
+            });
         }
 
         // Display files in the file browser

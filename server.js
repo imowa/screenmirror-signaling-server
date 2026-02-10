@@ -1457,6 +1457,21 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Handle TUS upload progress from device
+  socket.on('ftp-upload-progress', (data) => {
+    const { uploadId, bytesUploaded, totalBytes, percentage } = data;
+    console.log(`📊 Upload progress: uploadId=${uploadId}, ${percentage}% (${bytesUploaded}/${totalBytes} bytes)`);
+
+    // Broadcast to all connected web clients
+    io.emit('ftp-upload-progress', {
+      uploadId,
+      deviceId: socket.deviceId,
+      bytesUploaded,
+      totalBytes,
+      percentage
+    });
+  });
+
   // Handle file browse request from web client
   socket.on('browse-files-request', (data) => {
     const { requestId, deviceId, path } = data;
