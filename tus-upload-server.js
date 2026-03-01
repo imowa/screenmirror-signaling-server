@@ -32,7 +32,7 @@ const tusServer = new Server({
   respectForwardedHeaders: true,
 
   // Hooks for custom logic
-  async onUploadCreate(req, res, upload) {
+  async onUploadCreate(req, upload) {
     const deviceId = upload.metadata?.deviceId;
     if (!deviceId) {
       console.error('❌ TUS Create Error: Missing deviceId. Received metadata:', upload.metadata);
@@ -42,11 +42,9 @@ const tusServer = new Server({
     console.log(`📤 Upload created: ${upload.id} by device ${deviceId}`);
     console.log(`   Filename: ${upload.metadata?.filename || 'unknown'}`);
     console.log(`   Size: ${(upload.size / 1024 / 1024).toFixed(2)} MB`);
-
-    return res;
   },
 
-  async onUploadFinish(req, res, upload) {
+  async onUploadFinish(req, upload) {
     console.log(`✅ Upload completed: ${upload.id}`);
 
     try {
@@ -60,8 +58,10 @@ const tusServer = new Server({
       console.log(`   Moved to: ${finalPath}`);
 
       // Emit completion event via socket.io
-      const io = req.app.get('io');
-      if (io) {
+      // Notice we get io from req.app.get('io') - we need to make sure the HTTP server req has it
+      // Wait, @tus/server provides req.origin which is the original http request
+      if (req.app && req.app.get('io')) {
+        const io = req.app.get('io');
         io.emit('ftp-upload-complete', {
           uploadId: upload.id,
           deviceId: upload.metadata?.deviceId,
@@ -79,8 +79,6 @@ const tusServer = new Server({
       console.error(`❌ Error finalizing upload ${upload.id}:`, err);
       throw err;
     }
-
-    return res;
   }
 });
 
