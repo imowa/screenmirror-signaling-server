@@ -31,6 +31,12 @@ const tusServer = new Server({
   maxSize: MAX_FILE_SIZE,
   respectForwardedHeaders: true,
 
+  // Force HTTPS in Location header to prevent 301 redirects from reverse proxy
+  generateUrl(req, { proto, host, path, id }) {
+    // Always use HTTPS since dalang.io proxy enforces it
+    return `https://${host}${path}/${id}`;
+  },
+
   // Hooks for custom logic
   async onUploadCreate(req, upload) {
     const deviceId = upload.metadata?.deviceId;
