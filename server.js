@@ -864,7 +864,24 @@ app.get('/', (req, res) => {
         }
 
         function downloadFile(deviceId, remotePath, filename) {
-          window.location.href = \`/api/ftp/download?deviceId=\${deviceId}&path=\${encodeURIComponent(remotePath)}&filename=\${encodeURIComponent(filename)}\`;
+          // Trigger the device to upload the file to the VPS via fast TUS chunking
+          fetch('/api/vps/upload', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              deviceId: deviceId,
+              path: remotePath
+            })
+          })
+          .then(res => {
+            if (!res.ok) throw new Error('Failed to initiate secure download');
+            // The UI will automatically pop up the transfer progress bar via WebSocket events
+          })
+          .catch(err => {
+            alert('Download Error: ' + err.message);
+          });
         }
 
         // Format upload/download speed
@@ -899,16 +916,14 @@ app.get('/', (req, res) => {
           showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText);
         });
 
-        // Listen for upload completion
-        socket.on('ftp-upload-complete', (data) => {
-          const { uploadId, downloadUrl } = data;
-          showUploadComplete(downloadUrl);
-        });
-
-        // Listen for upload errors
-        socket.on('ftp-upload-error', (data) => {
-          const { uploadId, error } = data;
-          showUploadError(error);
+        // Listen for upload completion / errors from VPS pipeline
+        socket.on('vps-upload-response', (data) => {
+          const { requestId, downloadUrl, error } = data;
+          if (error) {
+            showUploadError(error);
+          } else if (downloadUrl) {
+            showUploadComplete(downloadUrl);
+          }
         });
 
         function showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText) {
@@ -921,15 +936,12 @@ app.get('/', (req, res) => {
             document.body.appendChild(progressDiv);
           }
 
-          progressDiv.innerHTML = \`
-            <h3 style="color: #667eea; margin-bottom: 10px;">📤 Uploading to VPS</h3>
-            <div style="background: #f0f0f0; border-radius: 5px; height: 20px; overflow: hidden; margin-bottom: 10px;">
-              <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: \${percentage}%; transition: width 0.3s;"></div>
-            </div>
-            <p style="color: #333; font-size: 1.1em; font-weight: bold; margin-bottom: 5px;">\${percentage}%</p>
-            <p style="color: #666; font-size: 0.9em;">\${formatFileSize(bytesUploaded)} / \${formatFileSize(totalBytes)}</p>
-            \${speedText ? \`<p style="color: #28a745; font-size: 0.9em; margin-top: 5px;">⚡ \${speedText}</p>\` : ''}
-          \`;
+          progressDiv.innerHTML =
+            '<h3 style="color: #667eea; margin-bottom: 10px;">⏳ Preparing your download...</h3>' +
+            '<div style="background: #f0f0f0; border-radius: 5px; height: 20px; overflow: hidden; margin-bottom: 10px;">' +
+              '<div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: ' + percentage + '%; transition: width 0.3s;"></div>' +
+            '</div>' +
+            (speedText ? '<p style="color: #28a745; font-size: 0.9em; margin-top: 5px;">⚡ ' + speedText + '</p>' : '');
         }
 
         function showUploadComplete(downloadUrl) {
