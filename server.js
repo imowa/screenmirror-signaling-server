@@ -1424,7 +1424,7 @@ io.on('connection', (socket) => {
       });
 
       socket.deviceId = deviceId;
-      
+
       console.log(`📤 Sending 'registered' response to ${socket.id}`);
       socket.emit('registered', { deviceId });
 
@@ -1654,7 +1654,7 @@ io.on('connection', (socket) => {
   socket.on('disconnect', (reason) => {
     console.log(`❌ Client disconnected: ${socket.id}`);
     console.log(`   Reason: ${reason}`);
-    
+
     if (socket.deviceId) {
       const device = devices.get(socket.deviceId);
       if (device) {
@@ -1686,7 +1686,7 @@ function broadcastDeviceList() {
     type: d.type,
     status: d.status
   }));
-  
+
   console.log(`📢 Broadcasting device list (${deviceList.length} devices):`);
   if (deviceList.length === 0) {
     console.log(`   (no devices)`);
@@ -1695,7 +1695,7 @@ function broadcastDeviceList() {
       console.log(`   - ${d.id}: ${d.name} (${d.type}) [${d.status}]`);
     });
   }
-  
+
   io.emit('devices', { devices: deviceList });
   console.log(`📢 Device list broadcasted to all clients`);
 }
@@ -1729,8 +1729,7 @@ if (typeof module !== 'undefined' && module.exports) {
 // TUS Upload Cleanup Job
 // ============================================
 
-const fs = require('fs').promises;
-const path = require('path');
+const fsPromises = require('fs').promises;
 const { UPLOAD_DIR } = require('./tus-upload-server');
 
 // Clean up abandoned uploads every 6 hours
@@ -1741,17 +1740,17 @@ async function cleanupAbandonedUploads() {
   console.log('🧹 Running TUS upload cleanup...');
 
   try {
-    const files = await fs.readdir(UPLOAD_DIR);
+    const files = await fsPromises.readdir(UPLOAD_DIR);
     const now = Date.now();
     let deletedCount = 0;
 
     for (const file of files) {
       const filePath = path.join(UPLOAD_DIR, file);
-      const stats = await fs.stat(filePath);
+      const stats = await fsPromises.stat(filePath);
 
-      // Delete files older than 24 hours
+      // If file hasn't been modified recently, delete it
       if (now - stats.mtimeMs > MAX_UPLOAD_AGE) {
-        await fs.unlink(filePath);
+        await fsPromises.unlink(filePath);
         deletedCount++;
         console.log(`   Deleted abandoned upload: ${file}`);
       }
