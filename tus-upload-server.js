@@ -43,9 +43,6 @@ const tusServer = new Server({
     console.log(`   Filename: ${upload.metadata?.filename || 'unknown'}`);
     console.log(`   Size: ${(upload.size / 1024 / 1024).toFixed(2)} MB`);
 
-    // Store deviceId for later use
-    upload.metadata.deviceId = deviceId;
-
     return res;
   },
 
@@ -76,7 +73,7 @@ const tusServer = new Server({
 
       // Clean up metadata file
       const metaPath = `${tempPath}.json`;
-      await fs.unlink(metaPath).catch(() => {});
+      await fs.unlink(metaPath).catch(() => { });
 
     } catch (err) {
       console.error(`❌ Error finalizing upload ${upload.id}:`, err);

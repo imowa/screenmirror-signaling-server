@@ -1752,6 +1752,9 @@ async function cleanupAbandonedUploads() {
   console.log('🧹 Running TUS upload cleanup...');
 
   try {
+    // Ensure directory exists to prevent ENOENT crashes on clean server startups
+    await fsPromises.mkdir(UPLOAD_DIR, { recursive: true }).catch(() => { });
+
     const files = await fsPromises.readdir(UPLOAD_DIR);
     const now = Date.now();
     let deletedCount = 0;
