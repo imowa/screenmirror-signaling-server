@@ -42,6 +42,8 @@ const tusServer = new Server({
     console.log(`📤 Upload created: ${upload.id} by device ${deviceId}`);
     console.log(`   Filename: ${upload.metadata?.filename || 'unknown'}`);
     console.log(`   Size: ${(upload.size / 1024 / 1024).toFixed(2)} MB`);
+
+    return {};
   },
 
   async onUploadFinish(req, upload) {
@@ -79,6 +81,8 @@ const tusServer = new Server({
       console.error(`❌ Error finalizing upload ${upload.id}:`, err);
       throw err;
     }
+
+    return {};
   }
 });
 
