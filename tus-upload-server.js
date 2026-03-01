@@ -33,10 +33,10 @@ const tusServer = new Server({
 
   // Hooks for custom logic
   async onUploadCreate(req, res, upload) {
-    // Validate deviceId from metadata
     const deviceId = upload.metadata?.deviceId;
     if (!deviceId) {
-      throw new Error('deviceId is required in metadata');
+      console.error('❌ TUS Create Error: Missing deviceId. Received metadata:', upload.metadata);
+      throw { status_code: 400, body: 'deviceId is required in metadata' };
     }
 
     console.log(`📤 Upload created: ${upload.id} by device ${deviceId}`);
