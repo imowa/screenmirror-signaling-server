@@ -178,11 +178,13 @@ function cleanupPendingRequests() {
   for (const [requestId, request] of pendingRequests.entries()) {
     const age = now - (request.timestamp || 0);
     if (age > CLEANUP_CONFIG.PENDING_REQUEST_TIMEOUT) {
-      if (request.reject) {
+      // Only auto-reject 'browse' type requests (short timeout, 30s).
+      // 'download' type requests manage their own 60-minute timeout handler.
+      if (request.type === 'browse' && request.reject) {
         request.reject(new Error('Request timeout'));
+        pendingRequests.delete(requestId);
+        removed++;
       }
-      pendingRequests.delete(requestId);
-      removed++;
     }
   }
 
@@ -1023,14 +1025,17 @@ app.post('/api/ftp/register', (req, res) => {
 
   console.log(`📱 FTP Registration: ${deviceId} (${deviceName || 'Unknown'}) at ${ipAddress}`);
 
-  // Store or update device info
+  // Get existing device or create new
+  const existingDevice = devices.get(deviceId) || {};
+
+  // Store or update device info by merging (vital to preserve socketId)
   devices.set(deviceId, {
+    ...existingDevice, // Keep socketId if already connected via WebSocket
     id: deviceId,
-    name: deviceName || 'Unknown Device',
-    type: 'ftp-only',
-    socketId: null,
-    status: 'online',
-    connectedAt: new Date(),
+    name: deviceName || existingDevice.name || 'Unknown Device',
+    type: existingDevice.type || 'ftp-only', // Preserve type if it was an active mirror device
+    status: existingDevice.status || 'online',
+    connectedAt: existingDevice.connectedAt || new Date(),
     lastActivity: Date.now(),
     ipAddress: ipAddress
   });
@@ -1085,7 +1090,7 @@ app.get('/api/ftp/browse', async (req, res) => {
 
     // Create promise to wait for response
     const responsePromise = new Promise((resolve, reject) => {
-      pendingRequests.set(requestId, { resolve, reject, timestamp: Date.now() });
+      pendingRequests.set(requestId, { type: 'browse', resolve, reject, timestamp: Date.now() });
 
       // Set timeout (30 seconds)
       setTimeout(() => {
@@ -1143,6 +1148,7 @@ app.get('/api/ftp/download', async (req, res) => {
 
     // Store response object for streaming (no buffering)
     pendingRequests.set(requestId, {
+      type: 'download',
       response: res,
       startTime: Date.now()
     });
@@ -1350,7 +1356,10 @@ io.on('connection', (socket) => {
   // Note: onAny() requires Socket.io 4.x+
   try {
     if (typeof socket.onAny === 'function') {
+      // Skip logging for binary-heavy events to prevent JSON.stringify crash on large chunks
+      const SKIP_LOG_EVENTS = new Set(['ftp-download-chunk', 'ftp-upload-progress']);
       socket.onAny((eventName, ...args) => {
+        if (SKIP_LOG_EVENTS.has(eventName)) return; // avoid serializing binary data
         console.log(`🔍 Event received: "${eventName}" from ${socket.id}`);
         if (args.length > 0) {
           try {
@@ -1380,15 +1389,19 @@ io.on('connection', (socket) => {
         console.error(`❌ No deviceId provided, using UUID fallback`);
       }
 
+      const existingDevice = devices.get(deviceId) || {};
+
       devices.set(deviceId, {
+        ...existingDevice,
         id: deviceId,
-        name: data.deviceName || 'Unknown Device',
-        type: data.deviceType || 'unknown',
+        name: data.deviceName || existingDevice.name || 'Unknown Device',
+        type: data.deviceType || existingDevice.type || 'unknown',
         socketId: socket.id,
         status: 'online',
-        connectedAt: new Date(),
+        connectedAt: existingDevice.connectedAt || new Date(),
         lastActivity: Date.now(),
-        ipAddress: data.ipAddress || null
+        // Preserve IP from FTP registration if they didn't send one
+        ipAddress: data.ipAddress || existingDevice.ipAddress || null
       });
 
       socket.deviceId = deviceId;
@@ -1424,15 +1437,19 @@ io.on('connection', (socket) => {
 
       console.log(`📝 Registering device with ID: ${deviceId}`);
 
+      const existingDevice = devices.get(deviceId) || {};
+
       devices.set(deviceId, {
+        ...existingDevice,
         id: deviceId,
-        name: data.deviceName || 'Unknown Device',
-        type: data.deviceType || 'unknown',
+        name: data.deviceName || existingDevice.name || 'Unknown Device',
+        type: data.deviceType || existingDevice.type || 'unknown',
         socketId: socket.id,
         status: 'online',
-        connectedAt: new Date(),
+        connectedAt: existingDevice.connectedAt || new Date(),
         lastActivity: Date.now(),
-        ipAddress: data.ipAddress || null
+        // Preserve IP from FTP registration if they didn't send one
+        ipAddress: data.ipAddress || existingDevice.ipAddress || null
       });
 
       socket.deviceId = deviceId;
@@ -1462,7 +1479,8 @@ io.on('connection', (socket) => {
       id: d.id,
       name: d.name,
       type: d.type,
-      status: d.status
+      status: d.status,
+      ipAddress: d.ipAddress
     }));
     socket.emit('devices', { devices: deviceList });
     console.log(`📋 Device list requested by ${socket.id}`);
@@ -1588,14 +1606,9 @@ io.on('connection', (socket) => {
       console.warn(`⚠️ Received chunk for unknown requestId=${requestId}`);
     }
 
-    // Also emit to all connected web clients for real-time updates
-    io.emit('ftp-download-chunk', {
-      requestId,
-      deviceId: socket.deviceId,
-      chunk,
-      isLast,
-      error
-    });
+    // Do NOT re-broadcast raw chunks to all clients — the binary payload would
+    // be sent to every connected browser, wasting bandwidth for non-participants.
+    // The HTTP response stream (above) is the only intended recipient of chunk data.
   });
 
   // Handle VPS upload response from device
@@ -1671,9 +1684,16 @@ io.on('connection', (socket) => {
       const device = devices.get(socket.deviceId);
       if (device) {
         console.log(`❌ Device disconnected: ${socket.deviceId} (${device.name})`);
+
+        // Mark device as offline instead of deleting, preserve ipAddress
+        devices.set(socket.deviceId, {
+          ...device,
+          socketId: null,
+          status: 'offline',
+          lastActivity: Date.now()
+        });
       }
-      devices.delete(socket.deviceId);
-      console.log(`📊 Remaining devices: ${devices.size}`);
+      console.log(`📊 Connected devices: ${Array.from(devices.values()).filter(d => d.status === 'online').length}`);
       broadcastDeviceList();
     } else {
       console.log(`⚠️  Socket ${socket.id} disconnected but had no deviceId`);
@@ -1696,7 +1716,8 @@ function broadcastDeviceList() {
     id: d.id,
     name: d.name,
     type: d.type,
-    status: d.status
+    status: d.status,
+    ipAddress: d.ipAddress
   }));
 
   console.log(`📢 Broadcasting device list (${deviceList.length} devices):`);
@@ -1745,7 +1766,7 @@ const fsPromises = require('fs').promises;
 const { UPLOAD_DIR } = require('./tus-upload-server');
 
 // Clean up abandoned uploads every 6 hours
-const CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+const TUS_CLEANUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours (distinct from device cleanup interval)
 const MAX_UPLOAD_AGE = 24 * 60 * 60 * 1000; // 24 hours
 
 async function cleanupAbandonedUploads() {
@@ -1785,7 +1806,7 @@ async function cleanupAbandonedUploads() {
 cleanupAbandonedUploads();
 
 // Schedule periodic cleanup
-setInterval(cleanupAbandonedUploads, CLEANUP_INTERVAL);
+setInterval(cleanupAbandonedUploads, TUS_CLEANUP_INTERVAL);
 
 // Start the HTTP server
 server.listen(PORT, () => {
