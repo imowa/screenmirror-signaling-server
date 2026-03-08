@@ -92,122 +92,7 @@ const pendingRequests = new Map();
 // Store monitored apps data: deviceId -> { apps: [], lastUpdate: timestamp }
 const monitoredApps = new Map();
 
-// Render Free Tier Optimization: Configuration
-const CLEANUP_CONFIG = {
-  DEVICE_TTL: 30 * 60 * 1000,        // 30 minutes - remove inactive devices
-  MONITORED_APPS_TTL: 60 * 60 * 1000, // 1 hour - remove stale app data
-  PENDING_REQUEST_TIMEOUT: 30 * 1000,  // 30 seconds - timeout pending requests
-  CLEANUP_INTERVAL: 5 * 60 * 1000,     // 5 minutes - run cleanup
-  MAX_DEVICES: 100,                     // Limit total devices
-  MAX_MONITORED_APPS: 50                // Limit monitored apps
-};
 
-// Helper function to generate unique request IDs
-function generateRequestId() {
-  return `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-}
-
-// Render Free Tier Optimization: Cleanup Functions
-function cleanupStaleDevices() {
-  const now = Date.now();
-  let removed = 0;
-
-  for (const [deviceId, device] of devices.entries()) {
-    const lastActivity = device.lastActivity || device.connectedAt?.getTime() || 0;
-    if (now - lastActivity > CLEANUP_CONFIG.DEVICE_TTL) {
-      devices.delete(deviceId);
-      removed++;
-      console.log(`🧹 Removed stale device: ${deviceId}`);
-    }
-  }
-
-  // Enforce max devices limit
-  if (devices.size > CLEANUP_CONFIG.MAX_DEVICES) {
-    const sortedDevices = Array.from(devices.entries())
-      .sort((a, b) => {
-        const aTime = a[1].lastActivity || a[1].connectedAt?.getTime() || 0;
-        const bTime = b[1].lastActivity || b[1].connectedAt?.getTime() || 0;
-        return aTime - bTime;
-      });
-
-    const toRemove = devices.size - CLEANUP_CONFIG.MAX_DEVICES;
-    for (let i = 0; i < toRemove; i++) {
-      devices.delete(sortedDevices[i][0]);
-      removed++;
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`🧹 Cleanup: Removed ${removed} stale devices. Current: ${devices.size}`);
-  }
-}
-
-function cleanupMonitoredApps() {
-  const now = Date.now();
-  let removed = 0;
-
-  for (const [deviceId, data] of monitoredApps.entries()) {
-    if (now - data.lastUpdate > CLEANUP_CONFIG.MONITORED_APPS_TTL) {
-      monitoredApps.delete(deviceId);
-      removed++;
-      console.log(`🧹 Removed stale monitored apps for device: ${deviceId}`);
-    }
-  }
-
-  // Enforce max limit
-  if (monitoredApps.size > CLEANUP_CONFIG.MAX_MONITORED_APPS) {
-    const sortedApps = Array.from(monitoredApps.entries())
-      .sort((a, b) => a[1].lastUpdate - b[1].lastUpdate);
-
-    const toRemove = monitoredApps.size - CLEANUP_CONFIG.MAX_MONITORED_APPS;
-    for (let i = 0; i < toRemove; i++) {
-      monitoredApps.delete(sortedApps[i][0]);
-      removed++;
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`🧹 Cleanup: Removed ${removed} stale app data. Current: ${monitoredApps.size}`);
-  }
-}
-
-function cleanupPendingRequests() {
-  const now = Date.now();
-  let removed = 0;
-
-  for (const [requestId, request] of pendingRequests.entries()) {
-    const age = now - (request.timestamp || 0);
-    if (age > CLEANUP_CONFIG.PENDING_REQUEST_TIMEOUT) {
-      // Only auto-reject 'browse' type requests (short timeout, 30s).
-      // 'download' type requests manage their own 60-minute timeout handler.
-      if (request.type === 'browse' && request.reject) {
-        request.reject(new Error('Request timeout'));
-        pendingRequests.delete(requestId);
-        removed++;
-      }
-    }
-  }
-
-  if (removed > 0) {
-    console.log(`🧹 Cleanup: Removed ${removed} timed-out requests. Current: ${pendingRequests.size}`);
-  }
-}
-
-function logMemoryUsage() {
-  const usage = process.memoryUsage();
-  console.log(`📊 Memory: ${Math.round(usage.heapUsed / 1024 / 1024)}MB / ${Math.round(usage.heapTotal / 1024 / 1024)}MB | Devices: ${devices.size} | Apps: ${monitoredApps.size} | Requests: ${pendingRequests.size}`);
-}
-
-function runPeriodicCleanup() {
-  cleanupStaleDevices();
-  cleanupMonitoredApps();
-  cleanupPendingRequests();
-  logMemoryUsage();
-}
-
-// Start periodic cleanup
-setInterval(runPeriodicCleanup, CLEANUP_CONFIG.CLEANUP_INTERVAL);
-console.log(`✅ Periodic cleanup enabled (every ${CLEANUP_CONFIG.CLEANUP_INTERVAL / 1000}s)`);
 
 // FTP Helper Functions (legacy - kept for backward compatibility)
 async function connectToDeviceFtp(deviceIp) {
@@ -270,6 +155,7 @@ app.get('/', (req, res) => {
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           min-height: 100vh;
           padding: 20px;
+          padding-bottom: 80px; /* Space for the floating download bar */
         }
 
         .container {
@@ -543,18 +429,42 @@ app.get('/', (req, res) => {
           50% { opacity: 0.5; }
         }
 
-        .render-warning {
-          margin-top: 15px;
-          padding: 12px;
-          background: #fff3cd;
-          border-left: 4px solid #ffc107;
-          border-radius: 5px;
-          font-size: 0.85em;
-          color: #856404;
+        .download-bar {
+          position: fixed;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          background: white;
+          padding: 15px;
+          box-shadow: 0 -5px 20px rgba(0,0,0,0.15);
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 20px;
+          z-index: 999;
+          transform: translateY(100%);
+          transition: transform 0.3s ease-out;
+        }
+
+        .download-bar.visible {
+          transform: translateY(0);
+        }
+
+        .file-checkbox {
+          width: 20px;
+          height: 20px;
+          cursor: pointer;
+          accent-color: #667eea;
+        }
+
+        .checkbox-container {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding-right: 15px;
         }
 
         @media (max-width: 768px) {
-          .header h1 { font-size: 1.8em; }
           .device-header { flex-direction: column; align-items: flex-start; gap: 15px; }
           .file-item { flex-direction: column; align-items: flex-start; gap: 10px; }
         }
@@ -566,9 +476,6 @@ app.get('/', (req, res) => {
           <h1>📱 Screen Mirror File Browser</h1>
           <p>Access and download files from your connected devices</p>
           <div id="server-status" class="server-status"></div>
-          <div class="render-warning" style="display:none;" id="render-warning">
-            ⚠️ <strong>Free Tier Notice:</strong> Server may spin down after 15 minutes of inactivity. First request after spin-down may take 30-50 seconds.
-          </div>
         </div>
         <div id="devices"></div>
       </div>
@@ -579,53 +486,110 @@ app.get('/', (req, res) => {
         let lastUploadTime = null;
         let lastUploadBytes = 0;
         let socket = null;
+        let downloadQueue = [];
+        let isDownloading = false;
+        let currentDownloadTarget = null;
+        let selectedFiles = new Set();
+        let activeDeviceId = null;
+
+        function toggleSelectAll(checkbox) {
+          const checkboxes = document.querySelectorAll('.item-checkbox');
+          checkboxes.forEach(cb => {
+            cb.checked = checkbox.checked;
+            handleFileSelection(cb);
+          });
+        }
+
+        function handleFileSelection(checkbox) {
+          const path = checkbox.dataset.path;
+          const name = checkbox.dataset.name;
+          const key = JSON.stringify({path, name});
+
+          if (checkbox.checked) {
+            selectedFiles.add(key);
+          } else {
+            selectedFiles.delete(key);
+          }
+          updateDownloadBar();
+        }
+
+        function updateDownloadBar() {
+          const bar = document.getElementById('download-bar');
+          if (!bar) return;
+          const countLabel = document.getElementById('selected-count');
+          if (selectedFiles.size > 0) {
+            countLabel.textContent = selectedFiles.size + " file(s) selected";
+            bar.classList.add('visible');
+          } else {
+            bar.classList.remove('visible');
+          }
+        }
+
+        function startBatchDownload() {
+          if (selectedFiles.size === 0) return;
+          if (isDownloading) return;
+
+          // Convert set back to array of objects
+          downloadQueue = Array.from(selectedFiles).map(k => JSON.parse(k));
+          
+          // Clear current selection visually and in memory
+          document.querySelectorAll('.item-checkbox, #select-all').forEach(cb => cb.checked = false);
+          selectedFiles.clear();
+          updateDownloadBar();
+          
+          processNextInQueue();
+        }
+
+        function processNextInQueue() {
+          if (downloadQueue.length === 0) {
+            isDownloading = false;
+            // Remove progress modal after 2 seconds
+            setTimeout(() => {
+              const p = document.getElementById('upload-progress');
+              if (p) p.remove();
+            }, 3000);
+            return;
+          }
+
+          isDownloading = true;
+          currentDownloadTarget = downloadQueue.shift();
+          
+          // Create initial UI for this specific item
+          showUploadProgress('initiating', 0, 0, 0, 'Starting...', true);
+          
+          // Trigger the standard download routine
+          downloadFile(activeDeviceId, currentDownloadTarget.path, currentDownloadTarget.name);
+        }
 
         async function loadServerStatus() {
-          try {
-            const res = await fetch('/health');
-            const data = await res.json();
-
-            const statusDiv = document.getElementById('server-status');
-            const uptimeMinutes = Math.floor(data.uptime / 60);
-            const uptimeHours = Math.floor(uptimeMinutes / 60);
-            const displayUptime = uptimeHours > 0
-              ? \`\${uptimeHours}h \${uptimeMinutes % 60}m\`
-              : \`\${uptimeMinutes}m\`;
-
-            statusDiv.innerHTML = \`
-              <div class="status-item">
-                <span class="status-online-badge"></span>
-                <strong>Status:</strong> Online
-              </div>
-              <div class="status-item">
-                <strong>⏱️ Uptime:</strong> \${displayUptime}
-              </div>
-              <div class="status-item">
-                <strong>💾 Memory:</strong> \${data.memory.heapUsed}MB / \${data.memory.heapTotal}MB
-              </div>
-              <div class="status-item">
-                <strong>📱 Devices:</strong> \${data.stats.devices}
-              </div>
-            \`;
-
-            // Show Render warning if uptime is low (recently started)
-            if (data.uptime < 300) { // Less than 5 minutes
-              document.getElementById('render-warning').style.display = 'block';
-            }
-          } catch (err) {
-            console.error('Failed to load server status:', err);
-            document.getElementById('server-status').innerHTML = \`
-              <div class="status-item" style="color: #dc3545;">
-                ⚠️ Unable to fetch server status
-              </div>
-            \`;
-          }
+          const statusDiv = document.getElementById('server-status');
+          statusDiv.innerHTML = \`
+            <div class="status-item">
+              <span class="status-online-badge"></span>
+              <strong>Status:</strong> Online (VPS)
+            </div>
+            <div class="status-item">
+              <strong>📱 Devices:</strong> \${currentDevice ? '1 connected' : 'Waiting...'}
+            </div>
+          \`;
         }
 
         async function loadDevices() {
           const res = await fetch('/api/devices');
           const data = await res.json();
           const devicesDiv = document.getElementById('devices');
+
+          // Append global download bar one time if it doesnt exist
+          if (!document.getElementById('download-bar')) {
+             const div = document.createElement('div');
+             div.id = 'download-bar';
+             div.className = 'download-bar';
+             div.innerHTML = \`
+               <strong style="color:#333;" id="selected-count">0 file(s) selected</strong>
+               <button class="download-btn" onclick="startBatchDownload()">🚀 Download Selected</button>
+             \`;
+             document.body.appendChild(div);
+          }
 
           if (data.devices.length === 0) {
             devicesDiv.innerHTML = \`
@@ -692,6 +656,13 @@ app.get('/', (req, res) => {
           console.log('🔍 browseDevice called:', { deviceId, path, sortBy, offset, append });
           currentDevice = { id: deviceId };
           currentPath = path;
+          activeDeviceId = deviceId;
+          
+          // Selection memory gets wiped on new folder navigation (but arguably ok)
+          if (!append) {
+             selectedFiles.clear();
+             updateDownloadBar();
+          }
 
           const filesDiv = document.getElementById(\`files-\${deviceId}\`);
           console.log('📂 filesDiv found:', filesDiv ? 'yes' : 'no');
@@ -715,10 +686,13 @@ app.get('/', (req, res) => {
             if (!append) {
               html = \`<div class="breadcrumb">
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                  <div>
-                    📍 <strong>Path:</strong> \${path}
-                    \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '/'); return false;">🏠 Home</a>\` : ''}
-                    \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '\${path.split('/').slice(0, -1).join('/') || '/'}'); return false;">⬆️ Up</a>\` : ''}
+                  <div style="display:flex; align-items:center; gap: 10px;">
+                    <input type="checkbox" id="select-all" class="file-checkbox" onclick="toggleSelectAll(this)" title="Select All Files">
+                    <span>
+                      📍 <strong>Path:</strong> \${path}
+                      \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '/'); return false;">🏠 Home</a>\` : ''}
+                      \${path !== '/' ? \`<a href="#" onclick="browseDevice('\${deviceId}', '\${path.split('/').slice(0, -1).join('/') || '/'}'); return false;">⬆️ Up</a>\` : ''}
+                    </span>
                   </div>
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <label style="font-size: 0.9em; color: #666;">Sort by:</label>
@@ -761,9 +735,15 @@ app.get('/', (req, res) => {
                   const filePath = file.path || (path === '/' ? \`/\${file.name}\` : \`\${path}/\${file.name}\`);
                   const fileSize = formatFileSize(file.size);
                   const fileIcon = getFileIcon(file.name);
+                  
+                  // Check if already selected in memory
+                  const isChecked = selectedFiles.has(JSON.stringify({path: filePath, name: file.name})) ? 'checked' : '';
 
                   return \`
                     <div class="file-item">
+                      <div class="checkbox-container">
+                        <input type="checkbox" class="file-checkbox item-checkbox" data-path="\${filePath}" data-name="\${file.name}" onclick="handleFileSelection(this)" \${isChecked}>
+                      </div>
                       <div class="file-info">
                         <div class="file-icon">\${fileIcon}</div>
                         <div class="file-details">
@@ -923,12 +903,30 @@ app.get('/', (req, res) => {
           const { requestId, downloadUrl, error } = data;
           if (error) {
             showUploadError(error);
+            // If in batch mode, wait 3 seconds then continue
+            if (isDownloading) {
+              setTimeout(processNextInQueue, 3000);
+            }
           } else if (downloadUrl) {
-            showUploadComplete(downloadUrl);
+            if (isDownloading) {
+              // Auto-Trigger Download via hidden anchor tag
+              const a = document.createElement('a');
+              a.href = downloadUrl;
+              a.setAttribute('download', '');
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              
+              // Proceed next
+              processNextInQueue();
+            } else {
+              // Standard single UI
+              showUploadComplete(downloadUrl);
+            }
           }
         });
 
-        function showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText) {
+        function showUploadProgress(uploadId, percentage, bytesUploaded, totalBytes, speedText, batchLabel = false) {
           // Create or update progress display
           let progressDiv = document.getElementById('upload-progress');
           if (!progressDiv) {
@@ -937,9 +935,14 @@ app.get('/', (req, res) => {
             progressDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.3); z-index: 1000; min-width: 300px;';
             document.body.appendChild(progressDiv);
           }
+          
+          let title = '⏳ Preparing your download...';
+          if (isDownloading && currentDownloadTarget) {
+            title = \`📥 Transferring: \${currentDownloadTarget.name} (\${downloadQueue.length} pending)\`;
+          }
 
           progressDiv.innerHTML =
-            '<h3 style="color: #667eea; margin-bottom: 10px;">⏳ Preparing your download...</h3>' +
+            '<h3 style="color: #667eea; margin-bottom: 10px; font-size: 1.1em;">' + title + '</h3>' +
             '<div style="background: #f0f0f0; border-radius: 5px; height: 20px; overflow: hidden; margin-bottom: 10px;">' +
               '<div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: ' + percentage + '%; transition: width 0.3s;"></div>' +
             '</div>' +
@@ -980,28 +983,6 @@ app.get('/', (req, res) => {
     </body>
     </html>
   `);
-});
-
-// Health check endpoint for Render free tier (prevents spin-down)
-app.get('/health', (req, res) => {
-  const uptime = process.uptime();
-  const memory = process.memoryUsage();
-
-  res.status(200).json({
-    status: 'ok',
-    uptime: Math.floor(uptime),
-    memory: {
-      heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
-      heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
-      rss: Math.round(memory.rss / 1024 / 1024)
-    },
-    stats: {
-      devices: devices.size,
-      monitoredApps: monitoredApps.size,
-      pendingRequests: pendingRequests.size
-    },
-    timestamp: new Date().toISOString()
-  });
 });
 
 app.get('/api/devices', (req, res) => {
