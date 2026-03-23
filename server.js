@@ -36,6 +36,11 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
+// Generate a unique request ID
+function generateRequestId() {
+  return uuidv4();
+}
+
 // Add download route for VPS uploaded files
 app.get('/download/vps/:filename', (req, res) => {
   const { filename } = req.params;

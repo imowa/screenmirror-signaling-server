@@ -1,3 +1,4 @@
+
 # ScreenMir Signaling Server
 
 This is the Node.js/Socket.io signaling server and WebRTC matching service for the ScreenMir application. It handles WebRTC offer/answer exchanges, ICE candidates, generic file transfers, and TUS-based large file chunk uploading.
